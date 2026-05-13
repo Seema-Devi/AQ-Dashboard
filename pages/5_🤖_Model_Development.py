@@ -13,7 +13,9 @@ except: XGBRegressor = None
 try:
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.layers import LSTM, Dense
-except: pass
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
 
 from ui_components import load_full_ui, render_footer
 
@@ -87,7 +89,13 @@ for m in models_to_run:
             Xt_s = sc_x.fit_transform(X_train).reshape((-1, 1, len(feat_cols)))
             yt_s = sc_y.fit_transform(y_train.values.reshape(-1, 1))
             Xv_s = sc_x.transform(X_test).reshape((-1, 1, len(feat_cols)))
-            lstm_m = Sequential([LSTM(50, activation='relu', input_shape=(1, len(feat_cols))), Dense(1)])
+            if not TENSORFLOW_AVAILABLE:
+                st.warning("LSTM model is not available because TensorFlow is not installed on Streamlit Cloud.")
+            else:
+                lstm_m = Sequential([
+                LSTM(50, activation='relu', input_shape=(1, len(feat_cols))),
+                Dense(1)
+                ])
             lstm_m.compile(optimizer='adam', loss='mse'); lstm_m.fit(Xt_s, yt_s, epochs=10, verbose=0)
             p = sc_y.inverse_transform(lstm_m.predict(Xv_s)).flatten()
             f = sc_y.inverse_transform(lstm_m.predict(sc_x.transform(X_fut).reshape(24, 1, len(feat_cols)))).flatten()
@@ -140,7 +148,14 @@ ax1.legend(); st.pyplot(fig1)
 
 # Plot 2: Future Forecast (Red-Line Plot)
 st.subheader(f"🔮 Plot 2: 24-Hour Future Trend Forecast")
-f_times = pd.date_range(start=df["DATETIME_HOUR"].iloc[-1] + pd.Timedelta(hours=1), periods=24, freq="H")
+df["DATETIME_HOUR"] = pd.to_datetime(df["DATETIME_HOUR"], errors="coerce")
+df = df.dropna(subset=["DATETIME_HOUR"]).sort_values("DATETIME_HOUR")
+
+f_times = pd.date_range(
+    start=df["DATETIME_HOUR"].iloc[-1] + pd.Timedelta(hours=1),
+    periods=24,
+    freq="h"
+)
 fig2, ax2 = plt.subplots(figsize=(12, 5))
 ax2.plot(df["DATETIME_HOUR"].tail(24), df[target_var].tail(24), label="Recent History", color="black", linewidth=2)
 for m_n, f_v in future_preds.items(): ax2.plot(f_times, f_v, label=f"{m_n} Forecast", marker="o", linestyle="--", color=colors.get(m_n))
