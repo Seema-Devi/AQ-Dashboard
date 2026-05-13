@@ -13,7 +13,18 @@ load_full_ui()
 # ======================================================
 df_clean = st.session_state.get("df_cleaned")
 if df_clean is None:
-    st.warning("⬅ Please clean your dataset before running Feature Engineering")
+    st.warning("""
+    ⬅ Please clean your dataset first before running Feature Engineering.
+
+   App Workflow:
+
+1️⃣ Upload datasets from the Home page  
+2️⃣ Explore data in Data Visualisation  
+3️⃣ Clean and preprocess the dataset  
+4️⃣ Perform EDA and analyse trends  
+5️⃣ Apply Feature Engineering  
+6️⃣ Train models and view AQI Forecasting
+""")
     st.stop()
 
 if "df_fe_base" not in st.session_state:

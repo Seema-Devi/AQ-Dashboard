@@ -20,7 +20,18 @@ load_full_ui()
 df = st.session_state.get("df")
 
 if df is None:
-    st.warning("⬅ Please upload both datasets from the sidebar to continue")
+    st.warning("""
+    ⬅ Please upload both datasets from the Home page to continue.
+
+   App Workflow:
+
+1️⃣ Upload datasets from the Home page  
+2️⃣ Explore data in Data Visualisation  
+3️⃣ Clean and preprocess the dataset  
+4️⃣ Perform EDA and analyse trends  
+5️⃣ Apply Feature Engineering  
+6️⃣ Train models and view AQI Forecasting
+""")
     st.stop()
 
 st.header("📊 Raw Data Visualisation")

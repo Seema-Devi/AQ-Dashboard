@@ -19,7 +19,18 @@ if "df_cleaned" in st.session_state:
 elif "df" in st.session_state:
     df = st.session_state["df"]
 else:
-    st.warning("⬅ Please clean your dataset first before running EDA")
+    st.warning("""
+    ⬅ Please clean your dataset first before running EDA.
+
+   App Workflow:
+
+1️⃣ Upload datasets from the Home page  
+2️⃣ Explore data in Data Visualisation  
+3️⃣ Clean and preprocess the dataset  
+4️⃣ Perform EDA and analyse trends  
+5️⃣ Apply Feature Engineering  
+6️⃣ Train models and view AQI Forecasting
+""")
     st.stop()
 
 st.header("📊 Exploratory Data Analysis")
