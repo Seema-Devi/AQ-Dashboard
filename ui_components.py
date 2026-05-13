@@ -26,7 +26,9 @@ def load_full_ui():
     margin-left: 0 !important;
     margin-right: 0 !important;
     max-width: 100% !important;
-    padding-bottom: 140px !important;
+    padding-bottom: 70px !important;
+    overflow-x: hidden !important;
+
 }
 
 /* ============================
@@ -66,10 +68,11 @@ div[data-testid="stImage"] img, .full-width img {
 }
 
 .full-width {
-    margin-left: 0 !important;
-    margin-right: 0 !important;
+     margin-left: 0rem !important;
+    margin-right: 0rem !important;
+    padding: 0rem !important;
     width: 100% !important;
-    padding: 0 !important;
+    overflow-x: hidden !important;
 }
 
 /* ============================
@@ -140,8 +143,7 @@ div[style*="background-color:#f0fdf4"] {
 }
 /* REMOVE ALL TOP SPACING ABOVE MAIN CONTENT */
 .stApp {
-    padding-top: 0 !important;
-    margin-top: 0 !important;
+    overflow-x: hidden !important;
 }
 
 [data-testid="stAppViewContainer"] {
