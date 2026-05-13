@@ -25,10 +25,10 @@ if df is None:
 
    App Workflow:
 
-1️⃣ Upload datasets from the Home page  
-2️⃣ Explore data in Data Visualisation  
+1️⃣ Upload datasets from the sidebar  
+2️⃣ Explore the data in Data Visualisation  
 3️⃣ Clean and preprocess the dataset  
-4️⃣ Perform EDA and analyse trends  
+4️⃣ Analyse trends and patterns in EDA  
 5️⃣ Apply Feature Engineering  
 6️⃣ Train models and view AQI Forecasting
 """)
