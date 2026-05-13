@@ -31,6 +31,7 @@ else:
 5️⃣ Apply Feature Engineering  
 6️⃣ Train models and view AQI Forecasting
 """)
+    render_footer()
     st.stop()
 
 st.header("📊 Exploratory Data Analysis")

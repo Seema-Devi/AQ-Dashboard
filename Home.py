@@ -169,6 +169,8 @@ else:
 
     if not file1 or not file2:
         st.warning("⬅ Please upload both datasets from the sidebar.")
+        render_footer()
+
         st.stop()
 
     @st.cache_data(show_spinner=False)

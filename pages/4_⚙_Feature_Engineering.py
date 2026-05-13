@@ -26,6 +26,7 @@ if df_clean is None:
 5️⃣ Apply Feature Engineering  
 6️⃣ Train models and view AQI Forecasting
 """)
+    render_footer()
     st.stop()
 
 if "df_fe_base" not in st.session_state:

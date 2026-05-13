@@ -38,7 +38,7 @@ if df is None:
 5️⃣ Apply Feature Engineering  
 6️⃣ Train models and view AQI Forecasting
 """)
-    
+    render_footer()
     st.stop()
 # Retrieve Sidebar Selections
 target_var = st.session_state.get("selected_target", "AQI")
