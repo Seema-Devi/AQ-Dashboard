@@ -24,7 +24,9 @@ st.write("")
 load_full_ui()
 
 df = st.session_state.get("df_engineered")
-
+if df is None:
+    st.warning("Please upload the dataset and do feature engineering.")
+    st.stop()
 # Retrieve Sidebar Selections
 target_var = st.session_state.get("selected_target", "AQI")
 model_choice = st.session_state.get("selected_model", "Random Forest")
