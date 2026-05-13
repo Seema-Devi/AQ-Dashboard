@@ -45,8 +45,8 @@ Auckland’s city centre and developing AI-powered forecasting models.
 <h4 style="color:#1e3a8a;">👩‍💻 Team Members</h4>
 <p style="font-size:14px; color:#475569; line-height:1.8;">
 • Seema Devi<br>
-• Deshika<br>
-• Sarah
+• Deshika Jayatilaka<br>
+• Yaqing Zhang (Sarah)
 </p>
 </div>
 """, unsafe_allow_html=True)
@@ -62,8 +62,8 @@ Auckland’s city centre and developing AI-powered forecasting models.
 ">
 <h4 style="color:#1e3a8a;">🎓 Supervisors</h4>
 <p style="font-size:14px; color:#475569; line-height:1.8;">
-• Dr Louis Boamponsem (Auckland Council)<br>
-• Dr Sara Zandi (NZSE)
+• Dr Louis Boamponsem (Auckland Council-External Supervisor)<br>
+• Dr Sara Zandi (NZSE- Internal Supervisor)
 </p>
 </div>
 """, unsafe_allow_html=True)
@@ -88,7 +88,8 @@ and short-term air quality forecasts for Auckland’s city centre.
 with col_right:
     st.markdown("""
 <div style="background-color:#ffffff; padding:22px; border-radius:14px;
-            box-shadow:0px 2px 8px rgba(0,0,0,0.08); border:1px solid #e2e8f0;">
+            box-shadow:0px 2px 8px rgba(0,0,0,0.08); border:1px solid #e2e8f0; margin-bottom:20px;
+">
 
 <h3 style="color:#1e3a8a;">🧭 App Workflow</h3>
 
@@ -99,7 +100,7 @@ with col_right:
                 color:white; display:flex; align-items:center; justify-content:center;
                 font-weight:700; margin-right:12px;">1</div>
     <div>
-        <b>Upload Datasets</b><br>
+        <b>📂 Upload Datasets</b><br>
         <span style="font-size:13px; color:#64748b;">Start from the Home page</span>
     </div>
 </div>
@@ -139,7 +140,7 @@ with col_right:
                 color:white; display:flex; align-items:center; justify-content:center;
                 font-weight:700; margin-right:12px;">5</div>
     <div>
-        <b>Feature Engineering</b><br>
+        <b>⚙️ Feature Engineering</b><br>
         <span style="font-size:13px; color:#64748b;">Create lag features & rolling windows</span>
     </div>
 </div>
@@ -149,7 +150,7 @@ with col_right:
                 color:white; display:flex; align-items:center; justify-content:center;
                 font-weight:700; margin-right:12px;">6</div>
     <div>
-        <b>Train Models & Forecast</b><br>
+        <b>🤖 Train Models & Forecast</b><br>
         <span style="font-size:13px; color:#64748b;">Generate 24‑hour AQI predictions</span>
     </div>
 </div>
@@ -261,5 +262,51 @@ st.success("Datasets merged and filtered successfully.")
 
 st.subheader("Filtered Dataset Preview")
 st.dataframe(filtered_df.head(200), use_container_width=True)
+# =========================
+# DATA PARAMETERS (CLEAN UI)
+# =========================
+st.markdown("""
+<div style="
+background-color:#ffffff;
+padding:20px;
+border-radius:14px;
+box-shadow:0px 2px 8px rgba(0,0,0,0.08);
+margin-top:20px;
+">
+<h3 style="color:#003d7a;">📘 Data Parameters</h3>
+<p style="color:gray; font-size:14px;">
+Click to expand each parameter description
+</p>
+</div>
+""", unsafe_allow_html=True)
+
+with st.expander("🌫 Air Quality Parameters"):
+    st.markdown("""
+    - **AQI** → Air Quality Index  
+    - **PM2.5** → Fine particulate matter  
+    - **PM10** → Coarse particulate matter  
+    - **NO, NO2, NOX** → Nitrogen-based pollutants  
+    """)
+
+with st.expander("🌦 Meteorological Data"):
+    st.markdown("""
+    - **TEMP** → Temperature (°C)  
+    - **RH** → Relative Humidity (%)  
+    - **WS** → Wind Speed  
+    - **WD** → Wind Direction  
+    """)
+
+with st.expander("🚗 Traffic & Activity Data"):
+    st.markdown("""
+    - **TRAFFICV** → Traffic volume  
+    - **TOTAL_PEDESTRIANS** → Pedestrian count  
+    - **CITY_CENTRE_TVCOUNT** → City centre traffic volume  
+    """)
+
+with st.expander("📍 Metadata"):
+    st.markdown("""
+    - **SITE** → Monitoring location  
+    - **DATETIME_HOUR** → Hourly timestamp  
+    """)
 
 render_footer()
