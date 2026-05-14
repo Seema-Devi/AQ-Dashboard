@@ -148,7 +148,7 @@ section[data-testid="stSidebar"] > div:first-child {{
 
 [data-testid="stSidebarNav"] {{
     padding-top: 0 !important;
-    margin-top: -50px !important;
+    margin-top: -70px !important;
 }}
 
 [data-testid="stSidebarNav"]::before {{

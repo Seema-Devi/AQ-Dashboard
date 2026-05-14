@@ -22,10 +22,13 @@ with col_left:
 
 <h3 style="color:#1e3a8a;">📘 About This Project</h3>
 
-<p style="font-size:15px; color:#334155; line-height:1.6;">
-This dashboard is part of an applied research project conducted in collaboration with 
-<b>Auckland Council</b>. The project focuses on understanding pollution behaviour in 
-Auckland’s city centre and developing AI-powered forecasting models.
+<p style="font-size:15px; color:#334155; line-height:1.6;  text-align: justify;
+">
+This dashboard is part of the <b> GDDA713 Capstone Project</b>, developed in collaboration with 
+<b>Auckland Council</b>. All datasets used in this analysis were provided directly by Auckland Council.
+The project focuses on understanding pollution behaviour in 
+Auckland’s city centre and developing AI-powered forecasting modelsto support evidence‑based urban 
+planning and air‑quality management.
 </p>
 
 </div>
@@ -62,8 +65,8 @@ Auckland’s city centre and developing AI-powered forecasting models.
 ">
 <h4 style="color:#1e3a8a;">🎓 Supervisors</h4>
 <p style="font-size:14px; color:#475569; line-height:1.8;">
-• Dr Louis Boamponsem (Auckland Council-External Supervisor)<br>
-• Dr Sara Zandi (NZSE- Internal Supervisor)
+• Dr Louis Boamponsem (External Supervisor - Auckland Council)<br>
+• Dr Sara Zandi (Internal Supervisor - NZSE)
 </p>
 </div>
 """, unsafe_allow_html=True)
@@ -74,9 +77,9 @@ Auckland’s city centre and developing AI-powered forecasting models.
     border-radius:10px;
     padding:12px;
     margin-top:14px;
-    border-left:4px solid #22c55e;
+    ">
+<p style="font-size:14px; color:#334155; line-height:1.6; margin-bottom:20px; text-align: justify;
 ">
-<p style="font-size:14px; color:#334155; line-height:1.6;">
 The project investigates how traffic activity, pedestrian movement, and meteorological 
 conditions influence pollutant levels such as PM<sub>2.5</sub>, PM<sub>10</sub>, and NO₂. 
 Using advanced machine learning and AI techniques, the system provides data-driven insights 
