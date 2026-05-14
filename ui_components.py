@@ -78,7 +78,7 @@ footer,
 
     padding-bottom: 20px !important;
 
-    margin: 0 auto !important;
+    margin: -40px auto !important;
                 
 
     overflow-x: hidden !important;
@@ -96,6 +96,7 @@ footer,
     ) !important;
 
     padding: 0 !important;
+
 
     overflow-x: hidden !important;
 }}
@@ -148,7 +149,7 @@ section[data-testid="stSidebar"] > div:first-child {{
 
 [data-testid="stSidebarNav"] {{
     padding-top: 0 !important;
-    margin-top: 0 !important;
+    margin-top: -70px !important;
 }}
 
 [data-testid="stSidebarNav"]::before {{

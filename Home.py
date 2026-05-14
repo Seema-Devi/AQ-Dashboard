@@ -22,7 +22,7 @@ with col_left:
 
 <h3 style="color:#1e3a8a;">📘 About This Project</h3>
 
-<p style="font-size:15px; color:#334155; line-height:1.6;  text-align: justify;
+<p style="font-size:14px; color:#334155; line-height:1.4;  text-align: justify;
 ">
 This dashboard is part of the <b> GDDA713 Capstone Project</b>, developed in collaboration with 
 <b>Auckland Council</b>. All datasets used in this analysis were provided directly by Auckland Council.
@@ -46,7 +46,7 @@ planning and air‑quality management.
     margin-top:12px;
 ">
 <h4 style="color:#1e3a8a;">👩‍💻 Team Members</h4>
-<p style="font-size:14px; color:#475569; line-height:1.8;">
+<p style="font-size:14px; color:#475569; line-height:1.5;">
 • Seema Devi<br>
 • Deshika Jayatilaka<br>
 • Yaqing Zhang (Sarah)
@@ -64,7 +64,7 @@ planning and air‑quality management.
     margin-top:12px;
 ">
 <h4 style="color:#1e3a8a;">🎓 Supervisors</h4>
-<p style="font-size:14px; color:#475569; line-height:1.8;">
+<p style="font-size:14px; color:#475569; line-height:1.5;">
 • Dr Louis Boamponsem (External Supervisor - Auckland Council)<br>
 • Dr Sara Zandi (Internal Supervisor - NZSE)
 </p>
