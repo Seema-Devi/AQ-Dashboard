@@ -8,3 +8,5 @@ xgboost
 seaborn
 statsmodels
 tensorflow-cpu
+openpyxl
+xlrd
