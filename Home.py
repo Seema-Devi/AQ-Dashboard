@@ -27,7 +27,7 @@ with col_left:
 This dashboard is part of the <b> GDDA713 Capstone Project</b>, developed in collaboration with 
 <b>Auckland Council</b>. All datasets used in this analysis were provided directly by Auckland Council.
 The project focuses on understanding pollution behaviour in 
-Auckland’s city centre and developing AI-powered forecasting modelsto support evidence‑based urban 
+Auckland’s city centre and developing AI-powered forecasting models to support evidence‑based urban 
 planning and air‑quality management.
 </p>
 

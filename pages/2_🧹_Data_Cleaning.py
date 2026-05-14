@@ -127,109 +127,106 @@ else:
     st.warning("Cannot compute high‑missing months — no datetime column found.")
 
 # =========================
-# 6. COLUMN-WISE CLEANING STRATEGY
+# 6. RUN FINAL CLEANING BUTTON
 # =========================
-st.subheader("6️⃣ Applying Column‑Wise Cleaning Strategy")
+st.subheader("6️⃣ Final Data Cleaning")
 
-# TEMP — time interpolation
-if "TEMP" in df.columns and time_col:
-    df = df.set_index(time_col)
-    df["TEMP"] = df["TEMP"].interpolate(method="time")
-    df["TEMP"] = df["TEMP"].fillna(df["TEMP"].median())
-    df = df.reset_index()
+st.info("After selecting/removing high-missing columns or months, click the button below to apply final cleaning.")
 
-# AQI — median
-if "AQI" in df.columns:
-    df["AQI"] = df["AQI"].fillna(df["AQI"].median())
+if st.button("🧹 Run Final Data Cleaning"):
 
-# NO, NO2, NOX — group median
-pollutants = ["NO", "NO2", "NOX"]
-existing_pollutants = [col for col in pollutants if col in df.columns]
-if existing_pollutants:
-    df[existing_pollutants] = df[existing_pollutants].fillna(
-        df[existing_pollutants].median()
-    )
+    # TEMP — time interpolation
+    if "TEMP" in df.columns and time_col:
+        df = df.set_index(time_col)
+        df["TEMP"] = df["TEMP"].interpolate(method="time")
+        df["TEMP"] = df["TEMP"].fillna(df["TEMP"].median())
+        df = df.reset_index()
 
-# PM10, PM2.5 — median
-for col in ["PM10", "PM2.5"]:
-    if col in df.columns:
-        df[col] = df[col].fillna(df[col].median())
+    # AQI — median
+    if "AQI" in df.columns:
+        df["AQI"] = df["AQI"].fillna(df["AQI"].median())
 
-# Weather variables — median
-for col in ["RH", "WS", "WD"]:
-    if col in df.columns:
-        df[col] = df[col].fillna(df[col].median())
+    # NO, NO2, NOX — median
+    pollutants = ["NO", "NO2", "NOX"]
+    existing_pollutants = [col for col in pollutants if col in df.columns]
 
-# Traffic columns — ONLY handle if NOT dropped
-traffic_cols = ["TRAFFICV", "TOTAL_PEDESTRIANS", "CITY_CENTRE_TVCOUNT"]
-for col in traffic_cols:
-    if col in df.columns:
-        df[col] = df[col].fillna(df[col].median())
+    if existing_pollutants:
+        df[existing_pollutants] = df[existing_pollutants].fillna(
+            df[existing_pollutants].median()
+        )
 
-# Remove temporary Month column
-if "Month" in df.columns:
-    df = df.drop(columns=["Month"])
+    # PM10, PM2.5 — median
+    for col in ["PM10", "PM2.5"]:
+        if col in df.columns:
+            df[col] = df[col].fillna(df[col].median())
 
-# =========================
-# 7. BEFORE/AFTER COMPARISON
-# =========================
-st.subheader("7️⃣ Before vs After Cleaning Comparison")
+    # Weather variables — median
+    for col in ["RH", "WS", "WD"]:
+        if col in df.columns:
+            df[col] = df[col].fillna(df[col].median())
 
-before_missing = df_before.isnull().sum()
-after_missing = df.isnull().sum()
+    # Traffic columns — median
+    traffic_cols = ["TRAFFICV", "TOTAL_PEDESTRIANS", "CITY_CENTRE_TVCOUNT"]
 
-comparison_df = pd.DataFrame({
-    "Column": df.columns,
-    "Before Missing": before_missing.reindex(df.columns).values,
-    "After Missing": after_missing.reindex(df.columns).values
-})
+    for col in traffic_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna(df[col].median())
 
-st.dataframe(comparison_df, use_container_width=True)
+    # Remove temporary Month column
+    if "Month" in df.columns:
+        df = df.drop(columns=["Month"])
 
-# =========================
-# 8. FINAL CLEANED DATASET
-# =========================
-df_cleaned = df.copy()
-st.session_state["df_cleaned"] = df_cleaned
+    # Save cleaned dataset
+    df_cleaned = df.copy()
+    st.session_state["df_cleaned"] = df_cleaned
 
-st.success("✅ Dataset cleaned successfully using intelligent strategies.")
+    st.success("✅ Dataset cleaned successfully.")
 
-# =========================
-# 9. CLEANING SUMMARY FOR REPORT
-# =========================
-st.subheader("📝 Cleaning Summary")
+    # BEFORE/AFTER COMPARISON
+    st.subheader("Before vs After Cleaning Comparison")
 
-summary_text = f"""
+    before_missing = df_before.isnull().sum()
+    after_missing = df_cleaned.isnull().sum()
+
+    comparison_df = pd.DataFrame({
+        "Column": df_cleaned.columns,
+        "Before Missing": before_missing.reindex(df_cleaned.columns).values,
+        "After Missing": after_missing.reindex(df_cleaned.columns).values
+    })
+
+    st.dataframe(comparison_df, use_container_width=True)
+
+    # CLEANING SUMMARY
+    st.subheader("📝 Cleaning Summary")
+
+    summary_text = f"""
 ### Data Cleaning Summary
 
-- Infinite values replaced with NaN  
-- Negative pollutant values converted to NaN  
-- Datetime column detected: **{time_col}**  
-- Dataset sorted chronologically  
-- High‑missing columns dropped (> {threshold}%): {high_missing_cols}  
-- High‑Missing months removed (>30% missing): {bad_months if time_col else "N/A"}  
-- TEMP cleaned using time interpolation + median fallback  
-- AQI cleaned using median imputation  
-- NO, NO2, NOX cleaned using group median  
-- PM10, PM2.5 cleaned using median  
-- RH, WS, WD cleaned using median  
-- Traffic columns cleaned using median 
+- Infinite values replaced with NaN
+- Negative pollutant values converted to NaN
+- Datetime column detected: **{time_col}**
+- Dataset sorted chronologically
+- High-missing columns dropped above selected threshold: {threshold}%
+- TEMP cleaned using time interpolation + median fallback
+- AQI, pollutants, weather, and traffic columns cleaned using median imputation
 """
 
-st.code(summary_text, language="markdown")
+    st.code(summary_text, language="markdown")
 
-# =========================
-# 10. DOWNLOAD CLEANED DATASET
-# =========================
-st.subheader("📥 Download Cleaned Dataset")
+    # DOWNLOAD CLEANED DATASET
+    st.subheader("📥 Download Cleaned Dataset")
 
-csv = df_cleaned.to_csv(index=False).encode("utf-8")
-st.download_button(
-    label="⬇ Download Cleaned CSV",
-    data=csv,
-    file_name="cleaned_aqi_dataset.csv",
-    mime="text/csv"
-)
+    csv = df_cleaned.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        label="⬇ Download Cleaned CSV",
+        data=csv,
+        file_name="cleaned_aqi_dataset.csv",
+        mime="text/csv"
+    )
+
+else:
+    st.warning("⚠ Final cleaning has not been applied yet. Please review columns/months first, then click the cleaning button.")
 
 
 # =========================
