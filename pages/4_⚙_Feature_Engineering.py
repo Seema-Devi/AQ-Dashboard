@@ -34,13 +34,13 @@ if "df_fe_base" not in st.session_state:
 
 df_fe_base = st.session_state["df_fe_base"]
 
-st.header("⚙️ Advanced Atmospheric Feature Engineering")
+st.header("⚙️ Advanced Feature Engineering")
 st.markdown("---")
 
 # ======================================================
-# SECTION 1: REDUNDANCY MANAGEMENT (EXCLUDING TARGETS)
+# SECTION 1: REDUNDANCY CHECK INFORMATION ONLY
 # ======================================================
-st.subheader("🗑️ 1. Multicollinearity & Redundancy Filter")
+st.subheader(" Multicollinearity & Redundancy Check")
 
 numeric_cols = df_fe_base.select_dtypes(include=np.number).columns
 corr_matrix = df_fe_base[numeric_cols].corr().abs()
@@ -51,70 +51,116 @@ redundant_pairs = []
 for i in range(len(numeric_cols)):
     for j in range(i + 1, len(numeric_cols)):
         if corr_matrix.iloc[i, j] > 0.80:
-            redundant_pairs.append((numeric_cols[i], numeric_cols[j]))
+            col_a = numeric_cols[i]
+            col_b = numeric_cols[j]
+            corr_value = corr_matrix.iloc[i, j]
 
-suggested_to_remove = set()
-for a, b in redundant_pairs:
-    if a not in protected_targets: suggested_to_remove.add(a)
-    elif b not in protected_targets: suggested_to_remove.add(b)
+            redundant_pairs.append({
+                "Feature 1": col_a,
+                "Feature 2": col_b,
+                "Correlation": corr_value
+            })
 
-suggested_list = sorted(list(suggested_to_remove))
+if redundant_pairs:
+    st.info("""
+    Some variables show high correlation (>0.80), meaning they may contain overlapping information.
+    These variables are kept in the dataset to maintain consistent modelling results.
+    Feature importance and model performance will be used later to understand their contribution.
+    """)
 
-if sorted(list(suggested_to_remove)):
-    st.info("The following features show high redundancy (>0.80 correlation). Select features to prune:")
-    to_delete = st.multiselect("Select features to delete:", options=suggested_list)
-    
-    if st.button("🗑️ Purge Selected Features"):
-        if to_delete:
-            st.session_state["df_fe_base"].drop(columns=to_delete, inplace=True)
-            st.success(f"Successfully pruned: {', '.join(to_delete)}")
-            st.rerun()
-        else:
-            st.warning("Please pick at least one feature to drop.")
+    redundant_df = pd.DataFrame(redundant_pairs)
+    st.dataframe(
+        redundant_df.style.format({"Correlation": "{:.2f}"}),
+        use_container_width=True
+    )
 else:
-    st.success("✅ Multi-collinearity check passed. No redundant non-target features detected.")
+    st.success("✅ Multicollinearity check passed. No highly redundant numeric features detected.")
 
 st.markdown("---")
 
 # ======================================================
 # SECTION 2: ADVANCED ATMOSPHERIC RUN ENGINEERING
 # ======================================================
-st.subheader("🚀 2. Atmospheric & Cyclical Feature Extraction")
+st.subheader(" Feature Extraction")
 run_fe = st.button("🔧 Generate Advanced Feature Set")
 
 if run_fe or "df_engineered" in st.session_state:
     if run_fe:
         with st.spinner("Processing deep architectural features..."):
             progress = st.progress(0)
-            df_temp = df_fe_base.copy().sort_values("DATETIME_HOUR")
+            df_temp = df_fe_base.copy()
 
-            # A. Cyclical Time Transformations (Continuous Time Loop)
+            if "DATETIME_HOUR" not in df_temp.columns:
+                st.error("DATETIME_HOUR column is missing. Please check your cleaned dataset.")
+                render_footer()
+                st.stop()
+
+            df_temp["DATETIME_HOUR"] = pd.to_datetime(df_temp["DATETIME_HOUR"], errors="coerce")
+            df_temp = df_temp.dropna(subset=["DATETIME_HOUR"]).sort_values("DATETIME_HOUR")
+
+            # A. Cyclical Time Transformations
             progress.progress(20)
-            if "DATETIME_HOUR" in df_temp.columns:
-                df_temp["hour"] = df_temp["DATETIME_HOUR"].dt.hour
-                df_temp["hour_sin"] = np.sin(2 * np.pi * df_temp["hour"] / 24)
-                df_temp["hour_cos"] = np.cos(2 * np.pi * df_temp["hour"] / 24)
-                df_temp["day_sin"] = np.sin(2 * np.pi * df_temp["DATETIME_HOUR"].dt.dayofweek / 7)
-                df_temp["day_cos"] = np.cos(2 * np.pi * df_temp["DATETIME_HOUR"].dt.dayofweek / 7)
+            df_temp["hour"] = df_temp["DATETIME_HOUR"].dt.hour
+            df_temp["day_of_week"] = df_temp["DATETIME_HOUR"].dt.dayofweek
+            df_temp["month"] = df_temp["DATETIME_HOUR"].dt.month
 
-            # B. Pollution-Weather Interaction (Atmospheric Dispersion Logic)
+            df_temp["hour_sin"] = np.sin(2 * np.pi * df_temp["hour"] / 24)
+            df_temp["hour_cos"] = np.cos(2 * np.pi * df_temp["hour"] / 24)
+
+            df_temp["day_sin"] = np.sin(2 * np.pi * df_temp["day_of_week"] / 7)
+            df_temp["day_cos"] = np.cos(2 * np.pi * df_temp["day_of_week"] / 7)
+
+            df_temp["month_sin"] = np.sin(2 * np.pi * df_temp["month"] / 12)
+            df_temp["month_cos"] = np.cos(2 * np.pi * df_temp["month"] / 12)
+
+            def get_season(month):
+                if month in [12, 1, 2]:
+                    return "Summer"
+                elif month in [3, 4, 5]:
+                    return "Autumn"
+                elif month in [6, 7, 8]:
+                    return "Winter"
+                else:
+                    return "Spring"
+
+            df_temp["season"] = df_temp["month"].apply(get_season)
+
+            # B. Pollution-Weather Interaction
             progress.progress(50)
+
             if "TRAFFICV" in df_temp.columns and "WS" in df_temp.columns:
                 df_temp["traffic_dispersion"] = df_temp["TRAFFICV"] / (df_temp["WS"] + 1)
+
             if "TEMP" in df_temp.columns and "RH" in df_temp.columns:
                 df_temp["thermal_humidity_index"] = df_temp["TEMP"] * (df_temp["RH"] / 100)
 
-            # C. Multi-Step Deep Lags & Moving Statistics (Persistence Modeling)
+            if "PM2.5" in df_temp.columns and "NO2" in df_temp.columns:
+                df_temp["pm25_no2_ratio"] = df_temp["PM2.5"] / (df_temp["NO2"] + 1)
+
+            if "WS" in df_temp.columns and "PM2.5" in df_temp.columns:
+                df_temp["pm25_wind_dispersion"] = df_temp["PM2.5"] / (df_temp["WS"] + 1)
+
+            # C. Time-Series Lag and Rolling Features
             progress.progress(80)
+            lag_steps = [1, 2, 3, 6, 12, 24]
+
             for t in [t for t in protected_targets if t in df_temp.columns]:
-                df_temp[f"{t}_lag_1"] = df_temp[t].shift(1)
-                df_temp[f"{t}_lag_24"] = df_temp[t].shift(24)
-                df_temp[f"{t}_roll_mean_24"] = df_temp[t].rolling(24).mean()
-                df_temp[f"{t}_roll_std_24"] = df_temp[t].rolling(24).std()
+                for lag in lag_steps:
+                    df_temp[f"{t}_lag_{lag}"] = df_temp[t].shift(lag)
+
+                # shift(1) prevents current-value leakage
+                df_temp[f"{t}_roll_mean_6"] = df_temp[t].shift(1).rolling(6).mean()
+                df_temp[f"{t}_roll_std_6"] = df_temp[t].shift(1).rolling(6).std()
+
+                df_temp[f"{t}_roll_mean_24"] = df_temp[t].shift(1).rolling(24).mean()
+                df_temp[f"{t}_roll_std_24"] = df_temp[t].shift(1).rolling(24).std()
 
             progress.progress(100)
+
             df_temp = df_temp.dropna().reset_index(drop=True)
             st.session_state["df_engineered"] = df_temp
+
+            st.success("✅ Advanced feature set generated successfully.")
 
     df_display = st.session_state["df_engineered"]
     
@@ -125,15 +171,22 @@ if run_fe or "df_engineered" in st.session_state:
     # ======================================================
     # SECTION 3: PRO VISUALISATION & EXPLAINABILITY
     # ======================================================
-    st.subheader("📊 3. Statistical Mapping & Matrix Analysis")
+    st.subheader("📊 Statistical Mapping & Matrix Analysis")
     
     col_chart, col_table = st.columns([3, 2])
     
     with col_chart:
         st.write("**Complete Correlation Matrix**")
         final_numeric = df_display.select_dtypes(include=np.number)
+
         fig, ax = plt.subplots(figsize=(10, 7))
-        sns.heatmap(final_numeric.corr(), annot=False, cmap="coolwarm", center=0, ax=ax)
+        sns.heatmap(
+            final_numeric.corr(),
+            annot=False,
+            cmap="coolwarm",
+            center=0,
+            ax=ax
+        )
         plt.xticks(fontsize=8, rotation=45)
         plt.yticks(fontsize=8)
         st.pyplot(fig)
@@ -141,44 +194,25 @@ if run_fe or "df_engineered" in st.session_state:
     with col_table:
         st.write("**Target Dependency Values**")
         available_targets = [t for t in protected_targets if t in df_display.columns]
+
         if available_targets:
             target_corr = df_display.select_dtypes(include=np.number).corr()[available_targets]
+
             if "AQI" in available_targets:
                 target_corr = target_corr.sort_values(by="AQI", ascending=False)
-            st.dataframe(target_corr.style.format("{:.2f}"), use_container_width=True)
+
+            st.dataframe(
+                target_corr.style.format("{:.2f}"),
+                use_container_width=True
+            )
         else:
             st.caption("No primary target parameters available.")
 
-    # ======================================================
-    # SECTION 4: EXECUTIVE SUMMARY & ENVIRONMENTAL CARDS
-    # ======================================================
-    st.markdown("---")
-    st.subheader("🏥 4. Data-Driven Environmental Risk Assessment")
     
-    if "AQI" in df_display.columns:
-        avg_aqi = df_display["AQI"].mean()
-        max_aqi = df_display["AQI"].max()
-        
-        c_risk, c_stats = st.columns(2)
-        with c_risk:
-            if avg_aqi <= 50:
-                st.success(f"🍃 **Auckland Baseline: Good** (Avg AQI: {avg_aqi:.1f}). Ambient values sit safely below standard thresholds.")
-            elif avg_aqi <= 100:
-                st.warning(f"⚠️ **Auckland Baseline: Moderate** (Avg AQI: {avg_aqi:.1f}). Potential risks present for highly sensitive communities.")
-            else:
-                st.error(f"🚨 **Auckland Baseline: Poor** (Avg AQI: {avg_aqi:.1f}). Action recommended for public health mitigation.")
-                
-        with c_stats:
-            st.markdown(f"""
-            **Dataset Intelligence Briefing:**
-            *   **Maximum Recorded Peak:** `{max_aqi:.1f}` units.
-            *   **Engineered Dimensions:** `{df_display.shape[1]}` columns prepared for training.
-            *   **Time Horizon Continuity:** Temporal features fully mapped mathematically using cyclical coordinates.
-            """)
-
     # DOWNLOAD UTILITY
+    st.subheader("📥 Production-Ready Dataset (CSV)")
     st.download_button(
-        label="📥 Download Production-Ready Dataset (CSV)", 
+        label=" Download Dataset", 
         data=df_display.to_csv(index=False), 
         file_name="auckland_council_engineered_data.csv", 
         mime="text/csv"

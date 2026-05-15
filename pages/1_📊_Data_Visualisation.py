@@ -197,115 +197,6 @@ st.progress(completeness_score / 100)
 
 st.markdown("---")
 
-# =====================================
-# SECTION 8 — MEMORY USAGE
-# =====================================
-st.subheader("Memory Usage")
-
-memory_mb = df_raw.memory_usage(deep=True).sum() / 1024**2
-st.metric("Total Memory Usage (MB)", f"{memory_mb:.2f}")
-
-memory_df = df_raw.memory_usage(deep=True).reset_index()
-memory_df.columns = ["Column", "Bytes"]
-memory_df["MB"] = (memory_df["Bytes"] / 1024**2).round(4)
-
-st.dataframe(memory_df, use_container_width=True)
-
-st.markdown("---")
-
-# =====================================
-# SECTION 9 — BASIC RAW VISUALS
-# =====================================
-st.subheader("Basic Visualisations")
-
-selected_col = st.selectbox("Select a numeric column:", numeric_cols)
-
-fig = px.histogram(df_raw, x=selected_col, nbins=40, title=f"{selected_col} Distribution")
-st.plotly_chart(fig, use_container_width=True)
-
-fig = px.box(df_raw, y=selected_col, title=f"{selected_col} Outliers")
-st.plotly_chart(fig, use_container_width=True)
-
-if time_col:
-    fig = px.line(df_raw, x=time_col, y=selected_col, title=f"{selected_col} Over Time")
-    st.plotly_chart(fig, use_container_width=True)
-
-# =====================================
-# UPDATED CORRELATION HEATMAP
-# =====================================
-st.subheader("🔥 Correlation Heatmap")
-
-corr = numeric_df.corr()
-
-fig = px.imshow(
-    corr,
-    text_auto=True,
-    color_continuous_scale="RdBu_r",
-    title="Correlation Heatmap",
-    aspect="auto"
-)
-
-fig.update_layout(
-    xaxis_title="Parameters",
-    yaxis_title="Parameters",
-    margin=dict(l=40, r=40, t=60, b=40)
-)
-
-st.plotly_chart(fig, use_container_width=True)
-
-st.markdown("---")
-
-# ============================================================
-#   NEW SECTION: MISSING VALUE TIMELINE ANALYSIS
-# ============================================================
-st.subheader("⏱ Missing Value Timeline")
-
-if time_col:
-    col_to_check = st.selectbox("Select a column to view missing timeline:", df_raw.columns)
-
-    temp_df = df_raw[[time_col, col_to_check]].copy()
-    temp_df["is_missing"] = temp_df[col_to_check].isnull().astype(int)
-
-    fig = px.scatter(
-        temp_df,
-        x=time_col,
-        y="is_missing",
-        title=f"Missing Timeline for {col_to_check}",
-        color="is_missing",
-        color_continuous_scale=["green", "red"],
-        labels={"is_missing": "Missing (1 = Missing, 0 = Present)"}
-    )
-    fig.update_yaxes(tickvals=[0, 1])
-    fig.update_layout(height=300)
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("No datetime column found — cannot plot missing timeline.")
-
-st.markdown("---")
-
-# ============================================================
-#   NEW SECTION: MISSINGNESS HEATMAP OVER TIME
-# ============================================================
-st.subheader("📅 Missingness Heatmap Over Time")
-
-if time_col:
-    df_heat = df_raw.copy().set_index(time_col)
-    missing_matrix = df_heat.isnull().astype(int)
-
-    fig = px.imshow(
-        missing_matrix.T,
-        aspect="auto",
-        color_continuous_scale=["green", "red"],
-        title="Missingness Heatmap (Green = Present, Red = Missing)",
-        labels={"x": "Time", "y": "Columns"}
-    )
-    fig.update_xaxes(showticklabels=False)
-    fig.update_layout(height=500)
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("No datetime column found — cannot generate heatmap.")
-
-st.markdown("---")
 
 # ============================================================
 #   NEW SECTION: MISSING PERIOD SUMMARY
@@ -344,7 +235,7 @@ st.markdown("---")
 # ============================================================
 #   NEW SECTION: MISSINGNESS BY MONTH (MISSING MONTHS DETECTION)
 # ============================================================
-st.subheader("📅 Missingness by Month (High‑Missing Months Detection)")
+st.subheader("📅 Missing by Month (High‑Missing Months Detection)")
 
 if time_col:
     # Convert to month-year STRING (fixes Period JSON error)
@@ -388,6 +279,49 @@ if time_col:
 
 else:
     st.warning("⚠ No datetime column detected — cannot compute monthly missingness.")
+    
+# =====================================
+# SECTION 9 — BASIC RAW VISUALS
+# =====================================
+st.subheader("Basic Visualisations")
+
+selected_col = st.selectbox("Select a numeric column:", numeric_cols)
+
+fig = px.histogram(df_raw, x=selected_col, nbins=40, title=f"{selected_col} Distribution")
+st.plotly_chart(fig, use_container_width=True)
+
+fig = px.box(df_raw, y=selected_col, title=f"{selected_col} Outliers")
+st.plotly_chart(fig, use_container_width=True)
+
+if time_col:
+    fig = px.line(df_raw, x=time_col, y=selected_col, title=f"{selected_col} Over Time")
+    st.plotly_chart(fig, use_container_width=True)
+
+# =====================================
+# UPDATED CORRELATION HEATMAP
+# =====================================
+st.subheader("🔥 Correlation Heatmap")
+
+corr = numeric_df.corr()
+
+fig = px.imshow(
+    corr,
+    text_auto=True,
+    color_continuous_scale="RdBu_r",
+    title="Correlation Heatmap",
+    aspect="auto"
+)
+
+fig.update_layout(
+    xaxis_title="Parameters",
+    yaxis_title="Parameters",
+    margin=dict(l=40, r=40, t=60, b=40)
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("---")
+
 
 # =====================================
 # FOOTER

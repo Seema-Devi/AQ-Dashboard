@@ -46,13 +46,13 @@ Cleaning ensures your dataset becomes:
 # =========================
 # 1. FIX INF VALUES
 # =========================
-st.subheader("1️⃣ Handling Infinite Values")
+st.subheader("Handling Infinite Values")
 df = df.replace([np.inf, -np.inf], np.nan)
 
 # =========================
 # 2. IDENTIFY DATETIME COLUMN
 # =========================
-st.subheader("2️⃣ Datetime Cleaning")
+st.subheader(" Datetime Cleaning")
 time_col = None
 for col in df.columns:
     if "date" in col.lower() or "time" in col.lower():
@@ -69,7 +69,7 @@ else:
 # =========================
 # 3. FIX NEGATIVE VALUES
 # =========================
-st.subheader("3️⃣ Fixing Negative Values")
+st.subheader("Fixing Negative Values")
 numeric_cols = df.select_dtypes(include=np.number).columns
 for col in numeric_cols:
     df[col] = df[col].apply(lambda x: np.nan if x is not None and x < 0 else x)
@@ -77,7 +77,7 @@ for col in numeric_cols:
 # =========================
 # 4. DROP HIGH-MISSING COLUMNS (DYNAMIC)
 # =========================
-st.subheader("4️⃣ Drop High‑Missing Columns")
+st.subheader(" Drop High‑Missing Columns")
 
 missing_percent = df.isnull().mean() * 100
 threshold = st.slider("Select missing % threshold for dropping columns:", 10, 90, 40)
@@ -100,7 +100,7 @@ if st.button("🗑 Drop High‑Missing Columns"):
 # =========================
 # 5. DROP BAD MONTHS (OPTIONAL)
 # =========================
-st.subheader("5️⃣ Drop High‑Missing Months")
+st.subheader(" Drop High‑Missing Months")
 
 if time_col:
     df["Month"] = df[time_col].dt.to_period("M").astype(str)
@@ -129,7 +129,7 @@ else:
 # =========================
 # 6. RUN FINAL CLEANING BUTTON
 # =========================
-st.subheader("6️⃣ Final Data Cleaning")
+st.subheader("Final Data Cleaning")
 
 st.info("After selecting/removing high-missing columns or months, click the button below to apply final cleaning.")
 
