@@ -13,9 +13,10 @@ load_full_ui()
 
 px.defaults.template = "plotly_white"
 
+# Stops charts zooming in/out when mouse scrolls
 config = {
     "displayModeBar": False,
-    "scrollZoom": True
+    "scrollZoom": False
 }
 
 # =====================================
@@ -26,7 +27,18 @@ if "df_cleaned" in st.session_state:
 elif "df" in st.session_state:
     df = st.session_state["df"]
 else:
-    st.warning("⬅ Please clean your dataset first before running EDA.")
+    st.warning("""
+⬅ Please upload both datasets from the Home page to continue.
+
+App Workflow:
+
+1️⃣ Upload datasets from the sidebar  
+2️⃣ Explore the data in Data Visualisation  
+3️⃣ Clean and preprocess the dataset  
+4️⃣ Analyse trends and patterns in EDA  
+5️⃣ Apply Feature Engineering  
+6️⃣ Train models and view AQI Forecasting
+""")
     render_footer()
     st.stop()
 
@@ -192,7 +204,7 @@ if len(heatmap_cols) > 1:
 
     corr = df[heatmap_cols].corr().round(2)
 
-    # keep right-side / upper diagonal
+    # Right-side / upper diagonal heatmap
     mask = np.tril(np.ones_like(corr, dtype=bool), k=-1)
     corr_masked = corr.mask(mask)
 
