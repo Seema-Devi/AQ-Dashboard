@@ -44,7 +44,7 @@ App Workflow:
 
 df = df.copy()
 
-st.header("📊 Business-Oriented Air Quality EDA")
+st.header("📊  Air Quality EDA")
 
 # =====================================
 # DETECT COLUMNS
@@ -162,7 +162,6 @@ category_order = [
 st.markdown("""
 <div style="background-color:#ffffff; padding:20px; border-radius:14px;
 box-shadow:0px 2px 8px rgba(0,0,0,0.08); margin-bottom:22px;">
-<h4 style="color:#003d7a; margin-top:0;">Business Focus</h4>
 <p style="font-size:15px; color:#334155; line-height:1.6;">
 This EDA page tells a business story: pollution status, key relationships,
 urban activity pressure, time-based pollution risk, weather and wind behaviour,
