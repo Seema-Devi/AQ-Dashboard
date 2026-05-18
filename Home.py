@@ -352,10 +352,11 @@ def colour_availability(value):
     else:
         return "background-color: #bfdbfe;"   # blue
 
-    
-    styled_table = availability_table.style.applymap(colour_availability)
-    st.markdown(styled_table.to_html(), unsafe_allow_html=True)
 
+st.dataframe(
+     availability_table.style.map(colour_availability),
+    use_container_width=True
+)
 
 st.caption(
     "Grey = 0% available | Orange = 0–50% available | Blue = greater than 50% available"
