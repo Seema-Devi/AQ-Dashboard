@@ -8,6 +8,7 @@ load_full_ui()
 # =========================
 # ABOUT PROJECT + WORKFLOW
 # =========================
+
 col_left, col_right = st.columns([1.15, 0.85])
 
 with col_left:
@@ -22,13 +23,11 @@ with col_left:
 
 <h3 style="color:#1e3a8a;">📘 About This Project</h3>
 
-<p style="font-size:14px; color:#334155; line-height:1.4;  text-align: justify;
-">
-This dashboard is part of the <b> GDDA713 Capstone Project</b>, developed in collaboration with 
+<p style="font-size:14px; color:#334155; line-height:1.4; text-align: justify;">
+This dashboard is part of the <b>GDDA713 Capstone Project</b>, developed in collaboration with 
 <b>Auckland Council</b>. All datasets used in this analysis were provided directly by Auckland Council.
-The project focuses on understanding pollution behaviour in 
-Auckland’s city centre and developing AI-powered forecasting models to support evidence‑based urban 
-planning and air‑quality management.
+The project focuses on understanding pollution behaviour in Auckland’s city centre and developing 
+AI-powered forecasting models to support evidence-based urban planning and air-quality management.
 </p>
 
 </div>
@@ -38,13 +37,8 @@ planning and air‑quality management.
 
     with col_team:
         st.markdown("""
-<div style="
-    background-color:#f8fafc;
-    padding:16px;
-    border-radius:12px;
-    border:1px solid #e2e8f0;
-    margin-top:12px;
-">
+<div style="background-color:#f8fafc; padding:16px; border-radius:12px;
+border:1px solid #e2e8f0; margin-top:12px;">
 <h4 style="color:#1e3a8a;">👩‍💻 Team Members</h4>
 <p style="font-size:14px; color:#475569; line-height:1.5;">
 • Seema Devi<br>
@@ -55,14 +49,9 @@ planning and air‑quality management.
 """, unsafe_allow_html=True)
 
     with col_supervisor:
-        st.markdown("""
-<div style="
-    background-color:#f8fafc;
-    padding:16px;
-    border-radius:12px;
-    border:1px solid #e2e8f0;
-    margin-top:12px;
-">
+       st.markdown("""
+<div style="background-color:#f8fafc; padding:16px; border-radius:12px;
+border:1px solid #e2e8f0; margin-top:12px;">
 <h4 style="color:#1e3a8a;">🎓 Supervisors</h4>
 <p style="font-size:14px; color:#475569; line-height:1.5;">
 • Dr Louis Boamponsem (External Supervisor - Auckland Council)<br>
@@ -70,7 +59,6 @@ planning and air‑quality management.
 </p>
 </div>
 """, unsafe_allow_html=True)
-
     st.markdown("""
 <div style="
     background-color:#f0fdf4;
@@ -163,111 +151,330 @@ with col_right:
 """, unsafe_allow_html=True)
 
 # =========================
-# DATA MERGING AND FILTERING LOGIC
+# DATA PROCESSING + MERGING
 # =========================
-if "merged_df" in st.session_state:
-    df = st.session_state["merged_df"]
-else:
-    file1 = st.session_state.get("file1")
-    file2 = st.session_state.get("file2")
 
-    if not file1 or not file2:
-        st.warning("⬅ Please upload both datasets from the sidebar.")
-        render_footer()
+uploaded_files = st.session_state.get("uploaded_files", [])
 
-        st.stop()
+st.markdown("## 1️⃣ Processing of Data")
+# =========================
+# SHOW UPLOADED DATASETS
+# =========================
 
-    @st.cache_data(show_spinner=False)
-    def read_any(file):
-        if file.name.endswith(".csv"):
-            return pd.read_csv(file, low_memory=False)
-        return pd.read_excel(file)
+if uploaded_files:
 
-    @st.cache_data(show_spinner=True)
-    def process_and_merge(file1, file2):
-        raw1 = read_any(file1)
-        raw2 = read_any(file2)
+    
 
-        def process(df):
-            df = df.copy()
-            df.columns = df.columns.str.strip()
-            df['Time'] = df['Time'].astype(str).str.lower().str.strip()
-            df['Time'] = df['Time'].str.replace(r'(am|pm)\s+\1', r'\1', regex=True)
-            df['datetime'] = pd.to_datetime(df['Date'].astype(str) + " " + df['Time'], errors='coerce', dayfirst=True)
-            df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
-            df['datetime_hour'] = df['datetime'].dt.floor('h')
+    for i, file in enumerate(uploaded_files, start=1):
 
-            df_hourly = df.groupby(['Site', 'datetime_hour', 'Parameter'])['Value'].mean().reset_index()
-            df_wide = df_hourly.pivot_table(index=['Site', 'datetime_hour'], columns='Parameter', values='Value').reset_index()
-            df_wide.columns.name = None
-            df_wide = df_wide.rename(columns=str.upper)
-            return df_wide
+        file_size_mb = round(file.size / (1024 * 1024), 2)
 
-        df1 = process(raw1)
-        df2 = process(raw2)
+        st.markdown(f"""
+        
+        <b>Dataset {i}:</b> {file.name}<br>
+        <span style="color:#64748b; font-size:13px;">
+        Size: {file_size_mb} MB
+        </span>
+        
+        """, unsafe_allow_html=True)
 
-        merged = df1.merge(df2, on=['SITE', 'DATETIME_HOUR'], how='outer', suffixes=('_1', '_2'))
+if not uploaded_files:
+    st.warning("⬅ Please upload datasets from the sidebar.")
+    render_footer()
+    st.stop()
+
+
+@st.cache_data(show_spinner=False)
+def read_any(file):
+    if file.name.endswith(".csv"):
+        return pd.read_csv(file, low_memory=False)
+    return pd.read_excel(file)
+
+
+@st.cache_data(show_spinner=False)
+def process_single_file(file):
+    raw = read_any(file)
+
+    raw = raw.copy()
+    raw.columns = raw.columns.str.strip()
+
+    raw["Time"] = raw["Time"].astype(str).str.lower().str.strip()
+    raw["Time"] = raw["Time"].str.replace(r"(am|pm)\s+\1", r"\1", regex=True)
+
+    raw["datetime"] = pd.to_datetime(
+        raw["Date"].astype(str) + " " + raw["Time"],
+        errors="coerce",
+        dayfirst=True
+    )
+
+    raw["Value"] = pd.to_numeric(raw["Value"], errors="coerce")
+    raw["datetime_hour"] = raw["datetime"].dt.floor("h")
+
+    df_hourly = (
+        raw.groupby(["Site", "datetime_hour", "Parameter"])["Value"]
+        .mean()
+        .reset_index()
+    )
+
+    df_wide = (
+        df_hourly
+        .pivot_table(
+            index=["Site", "datetime_hour"],
+            columns="Parameter",
+            values="Value"
+        )
+        .reset_index()
+    )
+
+    df_wide.columns.name = None
+    df_wide = df_wide.rename(columns=str.upper)
+
+    return df_wide
+
+
+@st.cache_data(show_spinner=False)
+def process_and_merge_multiple(files):
+
+    processed_list = []
+
+    for file in files:
+        processed_df = process_single_file(file)
+
+        # Remove duplicate columns inside each processed file
+        processed_df = processed_df.loc[:, ~processed_df.columns.duplicated()]
+
+        processed_list.append(processed_df)
+
+    merged = processed_list[0]
+
+    for next_df in processed_list[1:]:
+
+        merged = merged.loc[:, ~merged.columns.duplicated()]
+        next_df = next_df.loc[:, ~next_df.columns.duplicated()]
+
+        merged = pd.merge(
+            merged,
+            next_df,
+            on=["SITE", "DATETIME_HOUR"],
+            how="outer",
+            suffixes=("", "_NEW")
+        )
+
+        duplicate_cols = [c for c in merged.columns if c.endswith("_NEW")]
+
+        for dup_col in duplicate_cols:
+            original_col = dup_col.replace("_NEW", "")
+
+            # Force both sides to be Series, not DataFrames
+            left_series = merged[original_col]
+            right_series = merged[dup_col]
+
+            if isinstance(left_series, pd.DataFrame):
+                left_series = left_series.iloc[:, 0]
+
+            if isinstance(right_series, pd.DataFrame):
+                right_series = right_series.iloc[:, 0]
+
+            merged[original_col] = left_series.combine_first(right_series)
+
+            merged = merged.drop(columns=[dup_col], errors="ignore")
+
         merged = merged.loc[:, ~merged.columns.duplicated()]
 
-        cols = ['AQI','NO','NO2','NOX','PM10','PM2.5','TEMP','RH','WS','WD']
-        for col in cols:
-            c1, c2 = f"{col}_1", f"{col}_2"
-            if c1 in merged.columns and c2 in merged.columns:
-                merged[col] = merged[c1].combine_first(merged[c2])
+    merged["DATETIME_HOUR"] = pd.to_datetime(
+        merged["DATETIME_HOUR"],
+        errors="coerce"
+    )
 
-        merged = merged.drop(columns=[c for c in merged.columns if c.endswith("_1") or c.endswith("_2")], errors='ignore')
-        merged = merged.sort_values(['SITE', 'DATETIME_HOUR'])
-        merged['DATETIME_HOUR'] = pd.to_datetime(merged['DATETIME_HOUR'])
-        return merged
+    merged = merged.dropna(subset=["DATETIME_HOUR"])
 
-    with st.spinner("Processing and merging datasets..."):
-        df = process_and_merge(file1, file2)
-        st.session_state["merged_df"] = df
+    merged = merged.sort_values(
+        ["SITE", "DATETIME_HOUR"]
+    )
+
+    return merged
+
+
+with st.spinner("Processing uploaded datasets..."):
+    df = process_and_merge_multiple(uploaded_files)
+    st.session_state["merged_df"] = df
+
+st.success("✅ Data processed successfully.")
 
 # =========================
-# FILTER SECTION
+# DATA AVAILABILITY BY YEAR / PARAMETER
 # =========================
-st.markdown("""
-<div style="
-background:#ffffff;
-padding:20px;
-border-radius:14px;
-box-shadow:0px 2px 8px rgba(0,0,0,0.08);
-margin-top:20px;
-">
-<h3 style="color:#1e3a8a;">📅 Filter Data</h3>
-</div>
-""", unsafe_allow_html=True)
 
-df['YEAR'] = df['DATETIME_HOUR'].dt.year
-df['MONTH'] = df['DATETIME_HOUR'].dt.month
+st.markdown("## 2️⃣ Data Availability by Year / Parameter")
 
-years = sorted(df['YEAR'].dropna().unique())
+df["YEAR"] = df["DATETIME_HOUR"].dt.year
+
+exclude_cols = ["SITE", "DATETIME_HOUR", "YEAR", "MONTH"]
+parameter_cols = [col for col in df.columns if col not in exclude_cols]
+
+years = sorted(df["YEAR"].dropna().unique())
+
+availability_table = pd.DataFrame(index=parameter_cols, columns=years)
+
+availability_pct_table = pd.DataFrame(index=parameter_cols, columns=years)
+
+for param in parameter_cols:
+    for year in years:
+        year_df = df[df["YEAR"] == year]
+        total_count = len(year_df)
+        available_count = year_df[param].notna().sum()
+
+        available_pct = (
+            (available_count / total_count) * 100
+            if total_count > 0 else 0
+        )
+
+        availability_table.loc[param, year] = (
+            f"{available_count}/{total_count} "
+            f"({available_pct:.1f}%)"
+        )
+
+        availability_pct_table.loc[param, year] = available_pct
+
+
+def colour_availability(value):
+    try:
+        pct = float(
+            str(value).split("(")[1].replace("%)", "")
+        )
+    except:
+        pct = 0
+
+    if pct == 0:
+        return "background-color: #e5e7eb;"   # grey
+    elif pct <= 50:
+        return "background-color: #fed7aa;"   # orange
+    else:
+        return "background-color: #bfdbfe;"   # blue
+
+
+st.dataframe(
+    availability_table.style.applymap(colour_availability),
+    use_container_width=True
+)
+
+st.caption(
+    "Grey = 0% available | Orange = 0–50% available | Blue = greater than 50% available"
+)
+# =========================
+# YEAR RANGE SELECTION
+# =========================
+
+st.markdown("## 3️⃣ Data Selection")
+
+years = sorted(df["YEAR"].dropna().unique())
 
 col1, col2 = st.columns(2)
-year_from = col1.selectbox("From Year", years)
-year_to = col2.selectbox("To Year", years, index=len(years)-1)
 
-months = {
-    1:"January",2:"February",3:"March",4:"April",5:"May",6:"June",
-    7:"July",8:"August",9:"September",10:"October",11:"November",12:"December"
-}
+year_from = col1.selectbox(
+    "From Year",
+    years,
+    index=0
+)
 
-selected_months = st.multiselect("Select Months (optional)", options=list(months.keys()), format_func=lambda x: months[x])
+year_to = col2.selectbox(
+    "To Year",
+    years,
+    index=len(years) - 1
+)
 
-filtered_df = df[(df['YEAR'] >= year_from) & (df['YEAR'] <= year_to)]
-if selected_months:
-    filtered_df = filtered_df[filtered_df['MONTH'].isin(selected_months)]
+if year_from > year_to:
+    st.error("From Year cannot be greater than To Year.")
+    render_footer()
+    st.stop()
 
-st.session_state["df"] = filtered_df
+selected_df = df[
+    (df["YEAR"] >= year_from) &
+    (df["YEAR"] <= year_to)
+].copy()
 
-st.success("Datasets merged and filtered successfully.")
+st.info(f"Selected years: {year_from} to {year_to}")
 
-st.subheader("Filtered Dataset Preview")
-st.dataframe(filtered_df.head(200), use_container_width=True)
 # =========================
-# DATA PARAMETERS (CLEAN UI)
+# PARAMETER AVAILABILITY FOR SELECTED YEARS
 # =========================
+
+st.markdown("## 4️⃣ Parameter Availability for Selected Years")
+
+selected_summary = []
+
+total_rows = len(selected_df)
+
+for param in parameter_cols:
+
+    available_count = selected_df[param].notna().sum()
+
+    availability_pct = (
+        (available_count / total_rows) * 100
+        if total_rows > 0 else 0
+    )
+
+    selected_summary.append({
+        "Parameter": param,
+        "Availability":
+            f"{available_count}/{total_rows} "
+            f"({availability_pct:.1f}%)"
+    })
+
+selected_availability_df = pd.DataFrame(selected_summary)
+
+
+def blue_cells(val):
+    return "background-color: ; color: ; font-weight: 600;"
+
+
+styled_selected_df = (
+    selected_availability_df.style
+    .map(blue_cells, subset=["Availability"])
+)
+
+st.dataframe(
+    styled_selected_df,
+    use_container_width=True
+)
+
+# =========================
+# CONFIRM SELECTED DATA
+# =========================
+
+st.markdown("## 5️⃣ Confirm Selected Data")
+
+if st.button("✅ Confirm This Data"):
+    st.session_state["df"] = selected_df
+    st.session_state["confirmed_data"] = selected_df
+    st.success("✅ Selected data confirmed successfully.")
+
+# =========================
+# DOWNLOAD SELECTED DATA
+# =========================
+
+st.markdown("## 6️⃣ Download Selected Data")
+
+csv_data = selected_df.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    label="⬇️ Download Selected Data as CSV",
+    data=csv_data,
+    file_name=f"selected_air_quality_data_{year_from}_{year_to}.csv",
+    mime="text/csv"
+)
+
+# =========================
+# SELECTED DATA PREVIEW
+# =========================
+
+st.subheader("Selected Dataset Preview")
+st.dataframe(selected_df.head(5), use_container_width=True)
+
+# =========================
+# DATA PARAMETERS
+# =========================
+
 st.markdown("""
 <div style="
 background-color:#ffffff;
@@ -293,8 +500,8 @@ with st.expander("🌫 Air Quality Parameters"):
 
 with st.expander("🌦 Meteorological Data"):
     st.markdown("""
-    - **TEMP** → Temperature (°C)  
-    - **RH** → Relative Humidity (%)  
+    - **TEMP** → Temperature  
+    - **RH** → Relative Humidity  
     - **WS** → Wind Speed  
     - **WD** → Wind Direction  
     """)

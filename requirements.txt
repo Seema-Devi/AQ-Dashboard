@@ -10,3 +10,4 @@ statsmodels
 tensorflow-cpu
 openpyxl
 xlrd
+shap

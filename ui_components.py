@@ -453,66 +453,28 @@ section[data-testid="stSidebar"] .stButton > button:hover {{
     # SIDEBAR
     # =========================
 
+    
     st.sidebar.markdown(
-        '<div class="sidebar-title">🤖 ML Model Settings</div>',
-        unsafe_allow_html=True
+    '<div class="sidebar-title">📂 Upload Datasets</div>',
+    unsafe_allow_html=True
     )
 
-    st.session_state["selected_target"] = st.sidebar.selectbox(
-        "🎯 Select Target",
-        ["AQI", "PM2.5", "NO2"],
-        key="sidebar_target"
-    )
-
-    st.session_state["selected_model"] = st.sidebar.selectbox(
-        "⚙️ Select Model",
-        ["Random Forest", "XGBoost", "LSTM", "Compare All"],
-        key="sidebar_model"
-    )
-
-    st.session_state["run_prediction"] = st.sidebar.button(
-        "🚀 Run 24h Forecast",
-        key="sidebar_run"
-    )
-
-    st.sidebar.markdown("---")
-
-    st.sidebar.markdown(
-        '<div class="sidebar-title">📂 Upload Datasets</div>',
-        unsafe_allow_html=True
-    )
-
-    uploaded1 = st.sidebar.file_uploader(
-        "Dataset 1",
+    uploaded_files = st.sidebar.file_uploader(
+       "Upload datasets",
         type=["csv", "xls", "xlsx"],
-        key="combined_file1"
-    )
+        accept_multiple_files=True,
+        key="combined_files"
+        )
 
-    if uploaded1 is not None:
-        st.session_state["file1"] = uploaded1
-
-    st.sidebar.markdown(
-        "<div class='upload-success'>✔ Dataset 1 uploaded successfully</div>"
-        if "file1" in st.session_state
-        else "<div class='upload-fail'>✖ Dataset 1 missing</div>",
-        unsafe_allow_html=True
-    )
-
-    uploaded2 = st.sidebar.file_uploader(
-        "Dataset 2",
-        type=["csv", "xls", "xlsx"],
-        key="combined_file2"
-    )
-
-    if uploaded2 is not None:
-        st.session_state["file2"] = uploaded2
+    if uploaded_files:
+        st.session_state["uploaded_files"] = uploaded_files
 
     st.sidebar.markdown(
-        "<div class='upload-success'>✔ Dataset 2 uploaded successfully</div>"
-        if "file2" in st.session_state
-        else "<div class='upload-fail'>✖ Dataset 2 missing</div>",
+        f"<div class='upload-success'>✔ {len(st.session_state['uploaded_files'])} dataset(s) uploaded successfully</div>"
+        if "uploaded_files" in st.session_state and st.session_state["uploaded_files"]
+        else "<div class='upload-fail'>✖ No datasets uploaded</div>",
         unsafe_allow_html=True
-    )
+     )
 
     st.sidebar.markdown("---")
 
@@ -523,7 +485,7 @@ section[data-testid="stSidebar"] .stButton > button:hover {{
 
 def render_footer():
 
-    st.markdown("""
+ st.markdown("""
     <div class="custom-footer">
         🌿 Auckland Council AQI Forecast Dashboard • GDDA713 • © 2026
     </div>

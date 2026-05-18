@@ -1,7 +1,10 @@
+import gc
+import traceback
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.express as px
 
 from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV, cross_val_score
 from sklearn.ensemble import RandomForestRegressor
@@ -10,16 +13,25 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 try:
     from xgboost import XGBRegressor
-except:
+except Exception:
     XGBRegressor = None
 
 try:
+    import tensorflow as tf
     from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense, Dropout
+    from tensorflow.keras.layers import GRU, Dense, Dropout
     from tensorflow.keras.callbacks import EarlyStopping
     TENSORFLOW_AVAILABLE = True
-except ImportError:
+except Exception:
+    tf = None
     TENSORFLOW_AVAILABLE = False
+
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except Exception:
+    shap = None
+    SHAP_AVAILABLE = False
 
 from ui_components import load_full_ui, render_footer
 
@@ -30,40 +42,205 @@ from ui_components import load_full_ui, render_footer
 st.write("")
 load_full_ui()
 
+px.defaults.template = "plotly_white"
+
+config = {
+    "displayModeBar": False,
+    "scrollZoom": False
+}
+
 df = st.session_state.get("df_engineered")
 
 if df is None:
-    st.warning("""
-⬅ Please upload the dataset and complete feature engineering first.
-
-App Workflow:
-1️⃣ Upload datasets  
-2️⃣ Clean data  
-3️⃣ Apply feature engineering  
-4️⃣ Select target and model from sidebar  
-5️⃣ Run 24-hour forecasting
-""")
+    st.warning("⬅ Please complete Feature Engineering first.")
     render_footer()
     st.stop()
 
-st.header("🤖 AI Model Development & 24-Hour Forecasting")
+df = df.copy()
+
+st.header("🤖 AI Model Development & Forecasting")
 
 
 # ======================================================
-# SIDEBAR SELECTIONS
+# SAFE ERROR HANDLING
 # ======================================================
-target_var = st.session_state.get("selected_target", "AQI")
-model_choice = st.session_state.get("selected_model", "LSTM")
-run_btn = st.session_state.get("run_prediction", False)
+def show_safe_error(title, err=None):
+    st.error(title)
+    if err is not None:
+        with st.expander("Show technical error details"):
+            st.code(traceback.format_exc())
+    render_footer()
+    st.stop()
 
-mode_choice = st.radio(
-    "Forecasting Mode",
-    ["Multivariate", "Univariate"],
-    horizontal=True
+
+# ======================================================
+# CSS
+# ======================================================
+st.markdown("""
+<style>
+.kpi-card {
+    padding: 18px;
+    border-radius: 16px;
+    color: white;
+    text-align: center;
+    box-shadow: 0px 3px 10px rgba(0,0,0,0.12);
+}
+.kpi-title {
+    font-size: 14px;
+    font-weight: 700;
+}
+.kpi-value {
+    font-size: 27px;
+    font-weight: 900;
+    margin-top: 6px;
+}
+.blue-card { background: linear-gradient(135deg, #2563eb, #60a5fa); }
+.green-card { background: linear-gradient(135deg, #059669, #34d399); }
+.orange-card { background: linear-gradient(135deg, #ea580c, #fb923c); }
+.purple-card { background: linear-gradient(135deg, #7c3aed, #a78bfa); }
+.red-card { background: linear-gradient(135deg, #dc2626, #f87171); }
+</style>
+""", unsafe_allow_html=True)
+
+
+def kpi_card(col, title, value, css_class):
+    col.markdown(f"""
+    <div class="kpi-card {css_class}">
+        <div class="kpi-title">{title}</div>
+        <div class="kpi-value">{value}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ======================================================
+# PAGE PURPOSE
+# ======================================================
+st.markdown("""
+<div style="
+background:white;
+padding:20px;
+border-radius:14px;
+box-shadow:0px 2px 8px rgba(0,0,0,0.08);
+margin-bottom:20px;
+">
+This page trains, optimises and compares selected forecasting models for AQI, PM2.5 and NO2.
+The main results are displayed first, followed by model comparison, residual analysis, and explainability.
+</div>
+""", unsafe_allow_html=True)
+
+
+# ======================================================
+# BASIC CHECKS
+# ======================================================
+if "DATETIME_HOUR" not in df.columns:
+    show_safe_error("DATETIME_HOUR column is missing. Please rerun Feature Engineering.")
+
+df["DATETIME_HOUR"] = pd.to_datetime(df["DATETIME_HOUR"], errors="coerce")
+df = df.dropna(subset=["DATETIME_HOUR"]).sort_values("DATETIME_HOUR").reset_index(drop=True)
+
+available_targets = [c for c in ["AQI", "PM2.5", "NO2"] if c in df.columns]
+
+if not available_targets:
+    show_safe_error("AQI, PM2.5 or NO2 target columns were not found.")
+
+
+# ======================================================
+# 1. FORECAST CONFIGURATION
+# ======================================================
+st.subheader("1️⃣ Forecast Configuration")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    target_var = st.selectbox(
+        "Forecast Target",
+        available_targets,
+        index=0
+    )
+
+with col2:
+    mode_choice = st.radio(
+        "Input Mode",
+        ["Multivariate", "Univariate"],
+        horizontal=True
+    )
+
+with col3:
+    forecast_horizon = st.selectbox(
+        "Forecast Horizon",
+        [1, 6, 12, 24],
+        index=3,
+        format_func=lambda x: f"{x} hours"
+    )
+
+selected_models = st.multiselect(
+    "Select Model(s)",
+    ["Random Forest", "XGBoost", "GRU"],
+    default=["XGBoost"]
 )
 
-if not run_btn:
-    st.info("Please select target variable and model from the sidebar, then click Run Forecast.")
+if not selected_models:
+    st.warning("Please select at least one model.")
+    render_footer()
+    st.stop()
+
+if len(selected_models) > 1:
+    st.warning(f"You selected {len(selected_models)} models. Training may take longer.")
+else:
+    st.info(f"Training selected model: {selected_models[0]}")
+
+
+# ======================================================
+# 2. OPTIMISATION SETTINGS
+# ======================================================
+st.subheader("2️⃣ Model Optimisation Settings")
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    cv_folds = st.slider(
+        "TimeSeriesSplit Folds",
+        min_value=2,
+        max_value=5,
+        value=3,
+        step=1
+    )
+
+with col2:
+    n_iter_search = st.slider(
+        "Search Iterations",
+        min_value=3,
+        max_value=10,
+        value=5,
+        step=1
+    )
+
+with col3:
+    test_size_pct = st.slider(
+        "Test Size (%)",
+        min_value=10,
+        max_value=30,
+        value=20,
+        step=5
+    )
+
+with col4:
+    gru_sequence_length = st.selectbox(
+        "GRU Sequence Length",
+        [12, 24, 48],
+        index=1
+    )
+
+enable_shap = st.checkbox(
+    "Run SHAP after training",
+    value=False,
+    help="Recommended only for Random Forest and XGBoost. GRU is not included."
+)
+
+run_model = st.button("🚀 Train and Forecast")
+
+if not run_model:
+    st.info("Select configuration above, then click **Train and Forecast**.")
     render_footer()
     st.stop()
 
@@ -71,31 +248,22 @@ if not run_btn:
 # ======================================================
 # DATA PREPARATION
 # ======================================================
-def prepare_data(data, target, mode):
+def prepare_tree_data(data, target, mode):
     df_m = data.copy()
 
-    if "DATETIME_HOUR" not in df_m.columns:
-        st.error("DATETIME_HOUR column is missing. Please run Feature Engineering again.")
-        render_footer()
-        st.stop()
-
-    df_m["DATETIME_HOUR"] = pd.to_datetime(df_m["DATETIME_HOUR"], errors="coerce")
-    df_m = df_m.dropna(subset=["DATETIME_HOUR"])
-    df_m = df_m.sort_values("DATETIME_HOUR").reset_index(drop=True)
-
     if target not in df_m.columns:
-        st.error(f"{target} column is missing from the engineered dataset.")
-        render_footer()
-        st.stop()
+        show_safe_error(f"{target} column is missing.")
 
-    # Predict next-hour target value
     df_m["LABEL"] = df_m[target].shift(-1)
 
     time_features = [
         "hour_sin",
         "hour_cos",
-        "weekday_sin",
-        "weekday_cos"
+        "day_sin",
+        "day_cos",
+        "month_sin",
+        "month_cos",
+        "is_weekend"
     ]
 
     target_features = [
@@ -115,30 +283,59 @@ def prepare_data(data, target, mode):
     if mode == "Univariate":
         final_features = target_features + time_features
         final_features = [f for f in final_features if f in df_m.columns]
-
     else:
-        exclude_cols = ["DATETIME_HOUR", "LABEL", "season"]
+        exclude_cols = ["DATETIME_HOUR", "LABEL"]
         numeric_cols = df_m.select_dtypes(include=np.number).columns.tolist()
         final_features = [c for c in numeric_cols if c not in exclude_cols]
 
-    if len(final_features) == 0:
-        st.error("No valid model features found. Please run Feature Engineering again.")
-        render_footer()
-        st.stop()
+    if not final_features:
+        show_safe_error("No valid model features found. Please rerun Feature Engineering.")
 
     df_ready = df_m.dropna(subset=["LABEL"] + final_features).reset_index(drop=True)
 
-    return df_ready, df_ready[final_features], df_ready["LABEL"], final_features
+    X = df_ready[final_features]
+    y = df_ready["LABEL"]
+
+    return df_ready, X, y, final_features
 
 
-df_model, X, y, feat_cols = prepare_data(df, target_var, mode_choice)
+def prepare_gru_data(data, target, mode, sequence_length):
+    df_m, X, y, features = prepare_tree_data(data, target, mode)
 
-if len(df_model) < 120:
-    st.error("Not enough rows for reliable model training.")
-    render_footer()
-    st.stop()
+    scaler_x = MinMaxScaler()
+    scaler_y = MinMaxScaler()
 
-split_idx = int(len(df_model) * 0.8)
+    X_scaled = scaler_x.fit_transform(X)
+    y_scaled = scaler_y.fit_transform(y.values.reshape(-1, 1)).flatten()
+
+    X_seq = []
+    y_seq = []
+    seq_times = []
+
+    for i in range(len(X_scaled) - sequence_length):
+        X_seq.append(X_scaled[i:i + sequence_length])
+        y_seq.append(y_scaled[i + sequence_length])
+        seq_times.append(df_m["DATETIME_HOUR"].iloc[i + sequence_length])
+
+    return (
+        df_m,
+        X,
+        y,
+        features,
+        np.array(X_seq),
+        np.array(y_seq),
+        scaler_x,
+        scaler_y,
+        seq_times
+    )
+
+
+df_model, X, y, feat_cols = prepare_tree_data(df, target_var, mode_choice)
+
+if len(df_model) < 150:
+    show_safe_error("Not enough valid rows for reliable modelling. At least 150 rows are recommended.")
+
+split_idx = int(len(df_model) * (1 - test_size_pct / 100))
 
 X_train = X.iloc[:split_idx]
 X_test = X.iloc[split_idx:]
@@ -146,48 +343,29 @@ X_test = X.iloc[split_idx:]
 y_train = y.iloc[:split_idx]
 y_test = y.iloc[split_idx:]
 
+test_times = df_model["DATETIME_HOUR"].iloc[split_idx:].reset_index(drop=True)
+
+n_splits = min(cv_folds, max(2, len(X_train) // 80))
+tscv = TimeSeriesSplit(n_splits=n_splits)
+
+st.info(
+    f"Chronological split: {100-test_size_pct}% train / {test_size_pct}% test. "
+    f"Optimisation uses TimeSeriesSplit with {n_splits} folds and {n_iter_search} search iterations."
+)
+
 
 # ======================================================
-# METRIC FUNCTIONS
+# METRICS AND HELPERS
 # ======================================================
 def calculate_metrics(actual, predicted):
+    actual = np.asarray(actual)
+    predicted = np.asarray(predicted)
+
     return {
         "MAE": mean_absolute_error(actual, predicted),
         "RMSE": np.sqrt(mean_squared_error(actual, predicted)),
         "R2": r2_score(actual, predicted)
     }
-
-
-def display_metric_cards(metrics):
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.metric("RMSE", f"{metrics['RMSE']:.3f}")
-
-    with c2:
-        st.metric("MAE", f"{metrics['MAE']:.3f}")
-
-    with c3:
-        st.metric("R² Score", f"{metrics['R2']:.3f}")
-
-
-# ======================================================
-# FORECAST HELPER FUNCTIONS
-# ======================================================
-def update_time_features(row, dt):
-    if "hour_sin" in row:
-        row["hour_sin"] = np.sin(2 * np.pi * dt.hour / 24)
-
-    if "hour_cos" in row:
-        row["hour_cos"] = np.cos(2 * np.pi * dt.hour / 24)
-
-    if "weekday_sin" in row:
-        row["weekday_sin"] = np.sin(2 * np.pi * dt.dayofweek / 7)
-
-    if "weekday_cos" in row:
-        row["weekday_cos"] = np.cos(2 * np.pi * dt.dayofweek / 7)
-
-    return row
 
 
 def build_next_feature_row(last_row, target, predicted_value, history_before_prediction, next_time, feat_cols):
@@ -196,11 +374,28 @@ def build_next_feature_row(last_row, target, predicted_value, history_before_pre
     if target in new_row:
         new_row[target] = predicted_value
 
-    new_row = update_time_features(new_row, next_time)
+    if "hour_sin" in new_row:
+        new_row["hour_sin"] = np.sin(2 * np.pi * next_time.hour / 24)
 
-    lag_steps = [1, 2, 3, 6, 12, 24]
+    if "hour_cos" in new_row:
+        new_row["hour_cos"] = np.cos(2 * np.pi * next_time.hour / 24)
 
-    for lag in lag_steps:
+    if "day_sin" in new_row:
+        new_row["day_sin"] = np.sin(2 * np.pi * next_time.dayofweek / 7)
+
+    if "day_cos" in new_row:
+        new_row["day_cos"] = np.cos(2 * np.pi * next_time.dayofweek / 7)
+
+    if "month_sin" in new_row:
+        new_row["month_sin"] = np.sin(2 * np.pi * next_time.month / 12)
+
+    if "month_cos" in new_row:
+        new_row["month_cos"] = np.cos(2 * np.pi * next_time.month / 12)
+
+    if "is_weekend" in new_row:
+        new_row["is_weekend"] = int(next_time.dayofweek in [5, 6])
+
+    for lag in [1, 2, 3, 6, 12, 24]:
         lag_col = f"{target}_lag_{lag}"
         if lag_col in new_row and len(history_before_prediction) >= lag:
             new_row[lag_col] = history_before_prediction[-lag]
@@ -220,7 +415,7 @@ def build_next_feature_row(last_row, target, predicted_value, history_before_pre
     return new_row[feat_cols]
 
 
-def recursive_forecast_tree(model, df_model, X, target, feat_cols, steps=24):
+def recursive_forecast_tree(model, df_model, X, target, feat_cols, steps):
     future_preds = []
     future_times = []
 
@@ -253,30 +448,36 @@ def recursive_forecast_tree(model, df_model, X, target, feat_cols, steps=24):
     return pd.Series(future_preds, index=future_times)
 
 
-def make_lstm_sequences(X_values, y_values, time_steps=24):
-    X_seq, y_seq = [], []
+def create_gru_model(time_steps, n_features):
+    model = Sequential([
+        GRU(48, input_shape=(time_steps, n_features)),
+        Dropout(0.2),
+        Dense(16, activation="relu"),
+        Dense(1)
+    ])
 
-    for i in range(len(X_values) - time_steps):
-        X_seq.append(X_values[i:i + time_steps])
-        y_seq.append(y_values[i + time_steps])
+    model.compile(
+        optimizer="adam",
+        loss="mse"
+    )
 
-    return np.array(X_seq), np.array(y_seq)
+    return model
 
 
-def recursive_forecast_lstm(model, scaler_x, scaler_y, df_model, X, target, feat_cols, steps=24, time_steps=24):
+def recursive_forecast_gru(model, scaler_x, scaler_y, df_model, X, target, feat_cols, steps, sequence_length):
     future_preds = []
     future_times = []
 
-    feature_window = X.tail(time_steps).copy()
+    feature_window = X.tail(sequence_length).copy()
     current_row = X.iloc[-1].copy()
     current_time = df_model["DATETIME_HOUR"].iloc[-1]
     history = df_model[target].tolist()
 
     for _ in range(steps):
-        X_window_scaled = scaler_x.transform(feature_window)
-        X_window_scaled = X_window_scaled.reshape(1, time_steps, len(feat_cols))
+        X_scaled = scaler_x.transform(feature_window)
+        X_scaled = X_scaled.reshape(1, sequence_length, len(feat_cols))
 
-        pred_scaled = model.predict(X_window_scaled, verbose=0)
+        pred_scaled = model.predict(X_scaled, verbose=0)
         pred = scaler_y.inverse_transform(pred_scaled)[0][0]
 
         next_time = current_time + pd.Timedelta(hours=1)
@@ -314,457 +515,537 @@ baseline_results = {}
 cv_results = {}
 val_preds = {}
 actual_series = {}
+actual_times = {}
 future_preds = {}
 importances = {}
 best_params_store = {}
+model_status = {}
+trained_models = {}
 
-models_to_run = ["Random Forest", "XGBoost", "LSTM"] if model_choice == "Compare All" else [model_choice]
+models_to_run = selected_models
 
-tscv = TimeSeriesSplit(n_splits=5)
+progress_bar = st.progress(0)
+total_models = len(models_to_run)
 
-colors = {
-    "Random Forest": "#1f77b4",
-    "XGBoost": "#2ca02c",
-    "LSTM": "#d62728"
-}
+for idx, model_name in enumerate(models_to_run, start=1):
 
-st.subheader(f"🎯 Forecast Target: {target_var}")
-st.caption(f"Mode: {mode_choice} | Forecast horizon: Next 24 hours")
+    with st.spinner(f"Training {model_name}..."):
 
+        try:
+            # ==================================================
+            # RANDOM FOREST
+            # ==================================================
+            if model_name == "Random Forest":
 
-for m in models_to_run:
-
-    with st.spinner(f"Training and optimising {m}..."):
-
-        # ==================================================
-        # RANDOM FOREST
-        # ==================================================
-        if m == "Random Forest":
-
-            baseline_model = RandomForestRegressor(
-                n_estimators=100,
-                random_state=42,
-                n_jobs=-1
-            )
-
-            baseline_model.fit(X_train, y_train)
-            base_pred = baseline_model.predict(X_test)
-            baseline_results[m] = calculate_metrics(y_test, base_pred)
-
-            grid = {
-                "n_estimators": [100, 200, 300],
-                "max_depth": [8, 12, 16, None],
-                "min_samples_split": [2, 5, 10],
-                "min_samples_leaf": [1, 2, 3]
-            }
-
-            search = RandomizedSearchCV(
-                RandomForestRegressor(random_state=42, n_jobs=-1),
-                grid,
-                n_iter=8,
-                cv=tscv,
-                random_state=42,
-                scoring="neg_root_mean_squared_error",
-                n_jobs=-1
-            )
-
-            search.fit(X_train, y_train)
-            best_m = search.best_estimator_
-
-            cv_score = cross_val_score(
-                best_m,
-                X_train,
-                y_train,
-                cv=tscv,
-                scoring="neg_root_mean_squared_error"
-            )
-
-            p = best_m.predict(X_test)
-            f_series = recursive_forecast_tree(best_m, df_model, X, target_var, feat_cols)
-
-            results[m] = calculate_metrics(y_test, p)
-            cv_results[m] = -cv_score.mean()
-            val_preds[m] = pd.Series(p, index=y_test.index)
-            actual_series[m] = pd.Series(y_test.values, index=y_test.index)
-            future_preds[m] = f_series
-            importances[m] = best_m.feature_importances_
-            best_params_store[m] = search.best_params_
-
-        # ==================================================
-        # XGBOOST
-        # ==================================================
-        elif m == "XGBoost":
-
-            if XGBRegressor is None:
-                st.warning("XGBoost is not installed. Please add xgboost to requirements.txt.")
-                continue
-
-            baseline_model = XGBRegressor(
-                random_state=42,
-                objective="reg:squarederror"
-            )
-
-            baseline_model.fit(X_train, y_train)
-            base_pred = baseline_model.predict(X_test)
-            baseline_results[m] = calculate_metrics(y_test, base_pred)
-
-            grid = {
-                "n_estimators": [100, 200, 300],
-                "learning_rate": [0.01, 0.05, 0.1],
-                "max_depth": [3, 5, 7],
-                "subsample": [0.8, 1.0],
-                "colsample_bytree": [0.8, 1.0]
-            }
-
-            search = RandomizedSearchCV(
-                XGBRegressor(
+                baseline_model = RandomForestRegressor(
+                    n_estimators=80,
                     random_state=42,
-                    objective="reg:squarederror"
-                ),
-                grid,
-                n_iter=8,
-                cv=tscv,
-                random_state=42,
-                scoring="neg_root_mean_squared_error",
-                n_jobs=-1
-            )
+                    n_jobs=-1
+                )
 
-            search.fit(X_train, y_train)
-            best_m = search.best_estimator_
+                baseline_model.fit(X_train, y_train)
+                base_pred = baseline_model.predict(X_test)
+                baseline_results[model_name] = calculate_metrics(y_test, base_pred)
 
-            cv_score = cross_val_score(
-                best_m,
-                X_train,
-                y_train,
-                cv=tscv,
-                scoring="neg_root_mean_squared_error"
-            )
+                grid = {
+                    "n_estimators": [80, 120],
+                    "max_depth": [8, 12, None],
+                    "min_samples_split": [2, 5],
+                    "min_samples_leaf": [1, 2]
+                }
 
-            p = best_m.predict(X_test)
-            f_series = recursive_forecast_tree(best_m, df_model, X, target_var, feat_cols)
+                search = RandomizedSearchCV(
+                    RandomForestRegressor(random_state=42, n_jobs=-1),
+                    grid,
+                    n_iter=n_iter_search,
+                    cv=tscv,
+                    random_state=42,
+                    scoring="neg_root_mean_squared_error",
+                    n_jobs=-1
+                )
 
-            results[m] = calculate_metrics(y_test, p)
-            cv_results[m] = -cv_score.mean()
-            val_preds[m] = pd.Series(p, index=y_test.index)
-            actual_series[m] = pd.Series(y_test.values, index=y_test.index)
-            future_preds[m] = f_series
-            importances[m] = best_m.feature_importances_
-            best_params_store[m] = search.best_params_
+                search.fit(X_train, y_train)
+                best_model = search.best_estimator_
 
-        # ==================================================
-        # LSTM
-        # ==================================================
-        elif m == "LSTM":
+                cv_score = cross_val_score(
+                    best_model,
+                    X_train,
+                    y_train,
+                    cv=tscv,
+                    scoring="neg_root_mean_squared_error"
+                )
 
-            if not TENSORFLOW_AVAILABLE:
-                st.warning("LSTM is not available because TensorFlow is not installed.")
-                continue
+                pred = best_model.predict(X_test)
+                forecast_series = recursive_forecast_tree(
+                    best_model,
+                    df_model,
+                    X,
+                    target_var,
+                    feat_cols,
+                    forecast_horizon
+                )
 
-            time_steps = 24
+                results[model_name] = calculate_metrics(y_test, pred)
+                cv_results[model_name] = -cv_score.mean()
+                val_preds[model_name] = pd.Series(pred)
+                actual_series[model_name] = pd.Series(y_test.values)
+                actual_times[model_name] = test_times
+                future_preds[model_name] = forecast_series
+                importances[model_name] = best_model.feature_importances_
+                best_params_store[model_name] = search.best_params_
+                model_status[model_name] = "Success"
+                trained_models[model_name] = best_model
 
-            if len(X_train) <= time_steps or len(X_test) <= time_steps:
-                st.warning("Not enough data for LSTM sequence training.")
-                continue
+            # ==================================================
+            # XGBOOST
+            # ==================================================
+            elif model_name == "XGBoost":
 
-            sc_x = MinMaxScaler()
-            sc_y = MinMaxScaler()
+                if XGBRegressor is None:
+                    model_status[model_name] = "Skipped: XGBoost not installed"
+                    st.warning("XGBoost is not installed.")
+                    progress_bar.progress(idx / total_models)
+                    continue
 
-            X_train_scaled = sc_x.fit_transform(X_train)
-            X_test_scaled = sc_x.transform(X_test)
+                baseline_model = XGBRegressor(
+                    random_state=42,
+                    objective="reg:squarederror",
+                    n_jobs=1
+                )
 
-            y_train_scaled = sc_y.fit_transform(y_train.values.reshape(-1, 1)).flatten()
+                baseline_model.fit(X_train, y_train)
+                base_pred = baseline_model.predict(X_test)
+                baseline_results[model_name] = calculate_metrics(y_test, base_pred)
 
-            X_train_seq, y_train_seq = make_lstm_sequences(
-                X_train_scaled,
-                y_train_scaled,
-                time_steps
-            )
+                grid = {
+                    "n_estimators": [80, 120],
+                    "learning_rate": [0.05, 0.1],
+                    "max_depth": [3, 5],
+                    "subsample": [0.8, 1.0],
+                    "colsample_bytree": [0.8, 1.0]
+                }
 
-            X_test_seq, y_test_seq_raw = make_lstm_sequences(
-                X_test_scaled,
-                y_test.values,
-                time_steps
-            )
+                search = RandomizedSearchCV(
+                    XGBRegressor(
+                        random_state=42,
+                        objective="reg:squarederror",
+                        n_jobs=1
+                    ),
+                    grid,
+                    n_iter=n_iter_search,
+                    cv=tscv,
+                    random_state=42,
+                    scoring="neg_root_mean_squared_error",
+                    n_jobs=1
+                )
 
-            lstm_m = Sequential([
-                LSTM(64, return_sequences=True, input_shape=(time_steps, len(feat_cols))),
-                Dropout(0.2),
-                LSTM(32),
-                Dropout(0.2),
-                Dense(16, activation="relu"),
-                Dense(1)
-            ])
+                search.fit(X_train, y_train)
+                best_model = search.best_estimator_
 
-            lstm_m.compile(optimizer="adam", loss="mse")
+                cv_score = cross_val_score(
+                    best_model,
+                    X_train,
+                    y_train,
+                    cv=tscv,
+                    scoring="neg_root_mean_squared_error"
+                )
 
-            early_stop = EarlyStopping(
-                monitor="val_loss",
-                patience=5,
-                restore_best_weights=True
-            )
+                pred = best_model.predict(X_test)
+                forecast_series = recursive_forecast_tree(
+                    best_model,
+                    df_model,
+                    X,
+                    target_var,
+                    feat_cols,
+                    forecast_horizon
+                )
 
-            history = lstm_m.fit(
-                X_train_seq,
-                y_train_seq,
-                validation_split=0.2,
-                epochs=40,
-                batch_size=32,
-                callbacks=[early_stop],
-                verbose=0
-            )
+                results[model_name] = calculate_metrics(y_test, pred)
+                cv_results[model_name] = -cv_score.mean()
+                val_preds[model_name] = pd.Series(pred)
+                actual_series[model_name] = pd.Series(y_test.values)
+                actual_times[model_name] = test_times
+                future_preds[model_name] = forecast_series
+                importances[model_name] = best_model.feature_importances_
+                best_params_store[model_name] = search.best_params_
+                model_status[model_name] = "Success"
+                trained_models[model_name] = best_model
 
-            p_scaled = lstm_m.predict(X_test_seq, verbose=0)
-            p = sc_y.inverse_transform(p_scaled).flatten()
+            # ==================================================
+            # GRU
+            # ==================================================
+            elif model_name == "GRU":
 
-            y_test_lstm = y_test.iloc[time_steps:]
+                if not TENSORFLOW_AVAILABLE:
+                    model_status[model_name] = "Skipped: TensorFlow not installed"
+                    st.warning("GRU is unavailable because TensorFlow is not installed.")
+                    progress_bar.progress(idx / total_models)
+                    continue
 
-            f_series = recursive_forecast_lstm(
-                lstm_m,
-                sc_x,
-                sc_y,
-                df_model,
-                X,
-                target_var,
-                feat_cols,
-                steps=24,
-                time_steps=time_steps
-            )
+                tf.keras.backend.clear_session()
+                gc.collect()
 
-            results[m] = calculate_metrics(y_test_lstm, p)
-            baseline_results[m] = results[m]
-            cv_results[m] = min(history.history["val_loss"]) ** 0.5
+                (
+                    df_gru,
+                    X_gru_raw,
+                    y_gru_raw,
+                    gru_features,
+                    X_seq,
+                    y_seq,
+                    scaler_x,
+                    scaler_y,
+                    seq_times
+                ) = prepare_gru_data(
+                    df,
+                    target_var,
+                    mode_choice,
+                    gru_sequence_length
+                )
 
-            val_preds[m] = pd.Series(p, index=y_test_lstm.index)
-            actual_series[m] = pd.Series(y_test_lstm.values, index=y_test_lstm.index)
-            future_preds[m] = f_series
+                if len(X_seq) < 100:
+                    model_status[model_name] = "Skipped: Not enough sequence data"
+                    st.warning("Not enough data for GRU sequence training.")
+                    progress_bar.progress(idx / total_models)
+                    continue
 
-            best_params_store[m] = {
-                "time_steps": 24,
-                "epochs": len(history.history["loss"]),
-                "batch_size": 32,
-                "early_stopping": True,
-                "dropout": 0.2
-            }
+                split_seq_idx = int(len(X_seq) * (1 - test_size_pct / 100))
+
+                X_train_seq = X_seq[:split_seq_idx]
+                X_test_seq = X_seq[split_seq_idx:]
+
+                y_train_seq = y_seq[:split_seq_idx]
+                y_test_seq = y_seq[split_seq_idx:]
+
+                seq_test_times = pd.Series(seq_times[split_seq_idx:]).reset_index(drop=True)
+
+                baseline_gru = Sequential([
+                    GRU(24, input_shape=(gru_sequence_length, len(gru_features))),
+                    Dense(1)
+                ])
+
+                baseline_gru.compile(optimizer="adam", loss="mse")
+
+                baseline_gru.fit(
+                    X_train_seq,
+                    y_train_seq,
+                    epochs=5,
+                    batch_size=64,
+                    verbose=0
+                )
+
+                base_scaled = baseline_gru.predict(X_test_seq, verbose=0)
+                base_pred = scaler_y.inverse_transform(base_scaled).flatten()
+                y_test_actual = scaler_y.inverse_transform(y_test_seq.reshape(-1, 1)).flatten()
+
+                baseline_results[model_name] = calculate_metrics(y_test_actual, base_pred)
+
+                tf.keras.backend.clear_session()
+                gc.collect()
+
+                gru_model = create_gru_model(
+                    gru_sequence_length,
+                    len(gru_features)
+                )
+
+                early_stop = EarlyStopping(
+                    monitor="val_loss",
+                    patience=2,
+                    restore_best_weights=True
+                )
+
+                history = gru_model.fit(
+                    X_train_seq,
+                    y_train_seq,
+                    validation_split=0.2,
+                    epochs=15,
+                    batch_size=64,
+                    callbacks=[early_stop],
+                    verbose=0
+                )
+
+                pred_scaled = gru_model.predict(X_test_seq, verbose=0)
+                pred = scaler_y.inverse_transform(pred_scaled).flatten()
+
+                forecast_series = recursive_forecast_gru(
+                    gru_model,
+                    scaler_x,
+                    scaler_y,
+                    df_gru,
+                    X_gru_raw,
+                    target_var,
+                    gru_features,
+                    forecast_horizon,
+                    gru_sequence_length
+                )
+
+                results[model_name] = calculate_metrics(y_test_actual, pred)
+                cv_results[model_name] = np.sqrt(min(history.history["val_loss"]))
+                val_preds[model_name] = pd.Series(pred)
+                actual_series[model_name] = pd.Series(y_test_actual)
+                actual_times[model_name] = seq_test_times
+                future_preds[model_name] = forecast_series
+                best_params_store[model_name] = {
+                    "sequence_length": gru_sequence_length,
+                    "epochs_used": len(history.history["loss"]),
+                    "batch_size": 64,
+                    "early_stopping": True,
+                    "patience": 2,
+                    "gru_units": [48],
+                    "dropout": 0.2
+                }
+                model_status[model_name] = "Success"
+                trained_models[model_name] = gru_model
+
+                gc.collect()
+
+        except Exception:
+            model_status[model_name] = "Failed"
+            st.warning(f"{model_name} could not be completed.")
+            with st.expander(f"Show {model_name} error details"):
+                st.code(traceback.format_exc())
+
+    progress_bar.progress(idx / total_models)
 
 
 if not results:
-    st.error("No model was successfully trained.")
-    render_footer()
-    st.stop()
+    show_safe_error("No model was successfully trained.")
 
 
 # ======================================================
-# BEST MODEL SELECTION
+# RESULT OBJECTS
 # ======================================================
 best_model_name = min(results, key=lambda x: results[x]["RMSE"])
 best_metrics = results[best_model_name]
 
+summary_rows = []
 
-# ======================================================
-# MAIN RESULT CARDS
-# ======================================================
-st.subheader("🏆 Best Prediction Result")
+for model_name in results:
+    base_rmse = baseline_results.get(model_name, {}).get("RMSE", np.nan)
+    opt_rmse = results[model_name]["RMSE"]
 
-c1, c2, c3, c4 = st.columns(4)
+    improvement = base_rmse - opt_rmse if not pd.isna(base_rmse) else np.nan
+    improvement_pct = (improvement / base_rmse * 100) if base_rmse and not pd.isna(base_rmse) else np.nan
 
-with c1:
-    st.metric("Best Model", best_model_name)
+    summary_rows.append({
+        "Model": model_name,
+        "Status": model_status.get(model_name, "Success"),
+        "Baseline RMSE": base_rmse,
+        "Optimised RMSE": opt_rmse,
+        "Improvement": improvement,
+        "Improvement %": improvement_pct,
+        "MAE": results[model_name]["MAE"],
+        "R²": results[model_name]["R2"],
+        "CV / Validation RMSE": cv_results.get(model_name, np.nan)
+    })
 
-with c2:
-    st.metric("RMSE", f"{best_metrics['RMSE']:.3f}")
+summary_df = pd.DataFrame(summary_rows)
+summary_df = summary_df.sort_values("Optimised RMSE").reset_index(drop=True)
+summary_df.insert(0, "Rank", range(1, len(summary_df) + 1))
 
-with c3:
-    st.metric("MAE", f"{best_metrics['MAE']:.3f}")
+plot_df = pd.DataFrame({
+    "Time": actual_times[best_model_name],
+    "Actual": actual_series[best_model_name],
+    "Predicted": val_preds[best_model_name]
+}).dropna()
 
-with c4:
-    st.metric("R²", f"{best_metrics['R2']:.3f}")
-
-
-# ======================================================
-# HEALTH / FORECAST ALERT
-# ======================================================
-max_v = future_preds[best_model_name].max()
-
-if max_v <= 50:
-    st.success(f"🍃 Good forecast condition. Peak predicted {target_var}: {max_v:.1f}")
-elif max_v <= 100:
-    st.warning(f"⚠️ Moderate forecast condition. Peak predicted {target_var}: {max_v:.1f}")
-else:
-    st.error(f"🚨 High forecast condition. Peak predicted {target_var}: {max_v:.1f}")
-
-
-# ======================================================
-# MODEL OPTIMISATION SUMMARY
-# ======================================================
-st.subheader("⚙️ Optimisation Summary")
-
-summary_df = pd.DataFrame({
-    "Model": list(results.keys()),
-    "Baseline RMSE": [baseline_results[m]["RMSE"] for m in results.keys()],
-    "Optimised RMSE": [results[m]["RMSE"] for m in results.keys()],
-    "CV RMSE": [cv_results[m] for m in results.keys()]
-})
-
-summary_df["Improvement"] = summary_df["Baseline RMSE"] - summary_df["Optimised RMSE"]
-
-fig_opt, ax_opt = plt.subplots(figsize=(10, 4))
-ax_opt.bar(summary_df["Model"], summary_df["Optimised RMSE"])
-ax_opt.set_title("Optimised Model RMSE Comparison")
-ax_opt.set_ylabel("RMSE")
-ax_opt.grid(True, axis="y", alpha=0.3)
-st.pyplot(fig_opt)
-
-with st.expander("View optimisation details"):
-    st.dataframe(summary_df.round(3), use_container_width=True)
-
-with st.expander("View best model parameters"):
-    for m, params in best_params_store.items():
-        st.write(f"**{m}**")
-        st.json(params)
-
-
-# ======================================================
-# HISTORICAL VALIDATION PLOT
-# ======================================================
-st.subheader("📈 Actual vs Predicted")
-
-fig1, ax1 = plt.subplots(figsize=(12, 4))
-
-actual_best = actual_series[best_model_name].reset_index(drop=True)
-pred_best = val_preds[best_model_name].reset_index(drop=True)
-
-ax1.plot(
-    actual_best.values[-100:],
-    label="Actual",
-    color="black",
-    linewidth=2
-)
-
-ax1.plot(
-    pred_best.values[-100:],
-    label=f"{best_model_name} Prediction",
-    linestyle="--",
-    color=colors.get(best_model_name, "#d62728"),
-    linewidth=2
-)
-
-ax1.set_xlabel("Recent Test Observations")
-ax1.set_ylabel(target_var)
-ax1.set_title(f"Historical Validation for {target_var}")
-ax1.legend()
-ax1.grid(True, alpha=0.3)
-
-st.pyplot(fig1)
-
-
-# ======================================================
-# 24-HOUR FORECAST
-# ======================================================
-st.subheader("🔮 Next 24-Hour Forecast")
-
-fig2, ax2 = plt.subplots(figsize=(12, 5))
-
-ax2.plot(
-    df_model["DATETIME_HOUR"].tail(24),
-    df_model[target_var].tail(24),
-    label="Recent History",
-    color="black",
-    linewidth=2
-)
+plot_df["Residual"] = plot_df["Actual"] - plot_df["Predicted"]
 
 forecast_series = future_preds[best_model_name]
 
-ax2.plot(
-    forecast_series.index,
-    forecast_series.values,
-    label=f"{best_model_name} 24-Hour Forecast",
-    marker="o",
-    linestyle="--",
-    color=colors.get(best_model_name, "#d62728"),
-    linewidth=2
+forecast_table = pd.DataFrame({
+    "Forecast Time": forecast_series.index,
+    f"Forecasted {target_var}": forecast_series.values
+})
+
+
+# ======================================================
+# 3. FORECAST RESULTS SUMMARY
+# ======================================================
+st.markdown("---")
+st.subheader("3️⃣ Forecast Results Summary")
+
+c1, c2, c3, c4 = st.columns(4)
+
+kpi_card(c1, "Best Model", best_model_name, "blue-card")
+kpi_card(c2, "RMSE", f"{best_metrics['RMSE']:.3f}", "green-card")
+kpi_card(c3, "MAE", f"{best_metrics['MAE']:.3f}", "orange-card")
+kpi_card(c4, "R²", f"{best_metrics['R2']:.3f}", "purple-card")
+
+st.success(
+    f"Best model selected: {best_model_name}. "
+    f"It achieved the lowest optimised RMSE of {best_metrics['RMSE']:.3f}."
 )
 
-plt.xticks(rotation=45)
-ax2.set_xlabel("Time")
-ax2.set_ylabel(target_var)
-ax2.set_title(f"Next 24-Hour Forecast for {target_var}")
-ax2.legend()
-ax2.grid(True, alpha=0.3)
 
-st.pyplot(fig2)
+# ======================================================
+# 4. ACTUAL VS PREDICTED
+# ======================================================
+st.markdown("---")
+st.subheader("4️⃣ Actual vs Predicted")
 
+plot_recent = plot_df.tail(150)
 
-with st.expander("View 24-hour forecast values"):
-    forecast_table = pd.DataFrame({
-        "Forecast Time": forecast_series.index,
-        f"Forecasted {target_var}": forecast_series.values
-    })
+plot_long = plot_recent.melt(
+    id_vars="Time",
+    value_vars=["Actual", "Predicted"],
+    var_name="Series",
+    value_name=target_var
+)
 
-    st.dataframe(forecast_table.round(3), use_container_width=True)
+fig = px.line(
+    plot_long,
+    x="Time",
+    y=target_var,
+    color="Series",
+    title=f"Actual vs Predicted {target_var}"
+)
+
+fig.update_layout(height=520)
+
+st.plotly_chart(fig, use_container_width=True, config=config)
+
+st.info("""
+Insight:
+A good model should follow the actual trend closely.
+Large gaps between actual and predicted lines show periods where the model struggled.
+""")
 
 
 # ======================================================
-# FEATURE IMPORTANCE
+# 5. NEXT FORECAST
 # ======================================================
-if best_model_name in importances:
-    st.subheader("💡 Top Predictive Features")
+st.markdown("---")
+st.subheader(f"5️⃣ Next {forecast_horizon}-Hour Forecast")
 
-    imp_ser = pd.Series(importances[best_model_name], index=feat_cols)
-    imp_ser = imp_ser.sort_values(ascending=False).head(10)
+history_df = df_model[["DATETIME_HOUR", target_var]].dropna().tail(48)
 
-    fig_imp, ax_imp = plt.subplots(figsize=(10, 4))
-    ax_imp.barh(imp_ser.index[::-1], imp_ser.values[::-1])
-    ax_imp.set_title(f"Top Drivers for {best_model_name}")
-    ax_imp.set_xlabel("Importance")
-    ax_imp.grid(True, axis="x", alpha=0.3)
+history_plot = pd.DataFrame({
+    "Time": history_df["DATETIME_HOUR"],
+    "Value": history_df[target_var],
+    "Series": "Recent History"
+})
 
-    st.pyplot(fig_imp)
+forecast_plot = pd.DataFrame({
+    "Time": forecast_series.index,
+    "Value": forecast_series.values,
+    "Series": f"{best_model_name} Forecast"
+})
+
+forecast_combined = pd.concat([history_plot, forecast_plot], ignore_index=True)
+
+fig = px.line(
+    forecast_combined,
+    x="Time",
+    y="Value",
+    color="Series",
+    markers=True,
+    title=f"Next {forecast_horizon}-Hour Forecast for {target_var}"
+)
+
+fig.update_layout(height=520)
+
+st.plotly_chart(fig, use_container_width=True, config=config)
+
+with st.expander("📋 Open Forecast Values Table"):
+    st.dataframe(forecast_table.round(3), use_container_width=True, hide_index=True)
+
+
+# ======================================================
+# 6. MODEL COMPARISON MATRIX
+# ======================================================
+st.markdown("---")
+st.subheader("6️⃣ Model Comparison Table")
+
+with st.expander("📋 Open Model Comparison Table"):
+    st.dataframe(summary_df.round(3), use_container_width=True, hide_index=True)
+
+with st.expander("📋 Open Model Parameters"):
+    for model_name, params in best_params_store.items():
+        st.write(f"**{model_name}**")
+        st.json(params)
+
+
+
+# ======================================================
+# 7. FEATURE IMPORTANCE / SHAP
+# ======================================================
+st.markdown("---")
+st.subheader("7️⃣ Feature Importance and SHAP Explainability")
+
+
+if enable_shap and SHAP_AVAILABLE and best_model_name in ["Random Forest", "XGBoost"]:
+
+        try:
+            shap_sample = X_test.sample(min(150, len(X_test)), random_state=42)
+
+            explainer = shap.TreeExplainer(trained_models[best_model_name])
+            shap_values = explainer.shap_values(shap_sample)
+
+            shap_mean = np.abs(shap_values).mean(axis=0)
+
+            shap_df = pd.DataFrame({
+                "Feature": shap_sample.columns,
+                "Mean |SHAP Value|": shap_mean
+            }).sort_values("Mean |SHAP Value|", ascending=False).head(15)
+
+            fig = px.bar(
+                shap_df,
+                x="Mean |SHAP Value|",
+                y="Feature",
+                orientation="h",
+                color="Mean |SHAP Value|",
+                color_continuous_scale="Oranges",
+                title=f"SHAP Feature Impact for {best_model_name}"
+            )
+
+            fig.update_layout(height=560, yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig, use_container_width=True, config=config)
+
+            with st.expander("📋 Open SHAP Summary Table"):
+                st.dataframe(shap_df.round(4), use_container_width=True, hide_index=True)
+
+        except Exception:
+            st.warning("SHAP explanation could not be generated for this run.")
+
+elif best_model_name == "GRU":
+    st.info(
+        "SHAP is not generated for GRU in this dashboard because deep-learning SHAP is slower and less stable in Streamlit. "
+        "GRU is evaluated using RMSE, MAE, R², validation loss and actual-vs-predicted performance."
+    )
 
 else:
-    st.info("Feature importance is not directly available for LSTM. LSTM performance is evaluated using validation loss, RMSE, MAE, and R².")
+    st.info("Feature importance is not available for this model.")
 
 
 # ======================================================
-# SHORT SUPERVISOR ANSWERS
+# 9. FORECAST INTERPRETATION
 # ======================================================
-st.subheader("📝 Short Method Answers")
+st.markdown("---")
+st.subheader("8️⃣ Forecast Interpretation")
 
-with st.expander("Why did we use many parameters?"):
+peak_value = forecast_series.max()
+mean_value = forecast_series.mean()
+
+if target_var == "AQI":
+    if peak_value <= 50:
+        st.success(f"🍃 Good forecast condition. Peak predicted AQI: {peak_value:.1f}")
+    elif peak_value <= 100:
+        st.warning(f"⚠️ Moderate forecast condition. Peak predicted AQI: {peak_value:.1f}")
+    else:
+        st.error(f"🚨 High AQI forecast. Peak predicted AQI: {peak_value:.1f}")
+else:
+    st.info(f"Forecast summary for {target_var}: average {mean_value:.2f}, peak {peak_value:.2f}")
+
+with st.expander("How was the best model selected?"):
     st.write(
-        "Air quality is affected by pollutant levels, weather conditions, wind behaviour, and time patterns. "
-        "The dashboard uses these variables as input features, while the selected sidebar parameter is the forecast target."
+        "The best model was selected using the lowest optimised RMSE on the chronological test set. "
+        "MAE, R², baseline improvement and validation RMSE were used as supporting evidence."
     )
 
-with st.expander("Why model optimisation?"):
+with st.expander("Why use TimeSeriesSplit?"):
     st.write(
-        "Model optimisation improves prediction accuracy by testing different model settings and selecting the best-performing configuration."
+        "TimeSeriesSplit respects chronological order and avoids using future data during training."
     )
-
-with st.expander("Why cross-validation?"):
-    st.write(
-        "TimeSeriesSplit cross-validation checks whether the model performs consistently across different time periods without using future data for training."
-    )
-
-with st.expander("What are we forecasting?"):
-    st.write(
-        f"The dashboard forecasts the selected target parameter: {target_var}. "
-        "The output shows predicted values for the next 24 hours."
-    )
-
-with st.expander("Important forecasting assumption"):
-    st.write(
-        "For recursive 24-hour forecasting, lag and time features are updated step-by-step. "
-        "Future meteorological variables are not known, so their latest available values are carried forward unless future weather inputs are provided."
-    )
-
-
-# ======================================================
-# SAVE RESULTS
-# ======================================================
-st.session_state["forecast_target"] = target_var
-st.session_state["best_model"] = best_model_name
-st.session_state["forecast_series"] = forecast_series
-st.session_state["model_results"] = results
 
 
 render_footer()
