@@ -76,7 +76,7 @@ using:
 | Data Processing | Pandas + NumPy |
 | Visualisation | Plotly + Matplotlib + Seaborn |
 | Machine Learning | Scikit-learn |
-| Forecasting | XGBoost + Random Forest + LSTM |
+| Forecasting | XGBoost + Random Forest + GRU |
 | Deep Learning | TensorFlow / Keras |
 | Styling | Custom CSS |
 | Deployment | GitHub + Streamlit Cloud |
@@ -188,7 +188,6 @@ Analyses:
 - traffic vs pollution relationships
 - weather impact
 - seasonal behaviour
-- multicollinearity analysis
 - correlation analysis
 
 ---
@@ -213,7 +212,7 @@ Implemented models:
 
 - Random Forest
 - XGBoost
-- LSTM
+- GRU
 
 Includes:
 
@@ -280,7 +279,7 @@ The application is deployed using:
 
 - Real-time AQI monitoring
 - Live API integration
-- Advanced LSTM forecasting
+- Advanced GRU forecasting
 - Explainable AI integration
 - Smart-city environmental monitoring support
 
