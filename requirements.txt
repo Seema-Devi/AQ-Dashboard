@@ -7,7 +7,7 @@ scikit-learn
 xgboost
 seaborn
 statsmodels
-tensorflow
+tensorflow==2.16.1
 openpyxl
 xlrd
 missingpy
