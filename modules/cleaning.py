@@ -37,7 +37,7 @@ def render_cleaning():
     # =========================
     df_before = st.session_state.get("df")
 
-    if df is None:
+    if df_before is None:
         st.warning(
             """
         ⬅ Please follow the application workflow before using this page:
