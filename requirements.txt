@@ -7,7 +7,7 @@ scikit-learn
 xgboost
 seaborn
 statsmodels
-tensorflow-cpu
+tensorflow
 openpyxl
 xlrd
 missingpy
