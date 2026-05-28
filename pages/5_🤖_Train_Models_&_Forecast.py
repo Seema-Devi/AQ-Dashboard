@@ -1,6 +1,18 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import gc
+import os
+import random
+
+# ======================================================
+# REPRODUCIBILITY SETTINGS
+# ======================================================
+# These settings reduce run-to-run variation in GRU training.
+os.environ["PYTHONHASHSEED"] = "42"
+os.environ["TF_DETERMINISTIC_OPS"] = "1"
+np.random.seed(42)
+random.seed(42)
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -20,8 +32,13 @@ try:
     import tensorflow as tf
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.layers import GRU, Dense, Dropout
-    from tensorflow.keras.callbacks import EarlyStopping
+    from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
     from tensorflow.keras.optimizers import Adam
+    try:
+        tf.keras.utils.set_random_seed(42)
+        tf.config.experimental.enable_op_determinism()
+    except Exception:
+        pass
     TENSORFLOW_AVAILABLE = True
 except Exception:
     TENSORFLOW_AVAILABLE = False
@@ -31,7 +48,7 @@ from ui_components import load_full_ui, render_footer
 # ======================================================
 # PAGE CONFIG
 # ======================================================
-st.set_page_config(page_title="Model Training and Forcasting", page_icon="☁️", layout="wide")
+st.set_page_config(page_title="Model Training and Forecasting", page_icon="☁️", layout="wide")
 st.write("")
 load_full_ui()
 
@@ -49,8 +66,9 @@ FAST_XGB_MAX_DEPTH = 4
 FAST_XGB_LEARNING_RATE = 0.07
 FAST_PCA_VARIANCE = 0.85
 FAST_PCA_MAX_COMPONENTS = 6
-FAST_GRU_EPOCHS = 10
-FAST_GRU_LOOKBACKS = (24, 48, 72)
+FAST_GRU_EPOCHS = 50
+FAST_GRU_LOOKBACKS = (24,)
+FAST_GRU_BATCH_SIZE = 64
 
 # ======================================================
 # DATA LOAD
@@ -326,7 +344,7 @@ else:
 aqi_col = find_col(["AQI", "air quality index"], df)
 no2_col = find_col(["NO2", "NO₂", "nitrogen dioxide"], df)
 pm25_col = find_col(["PM2.5", "PM25", "PM 2.5"], df)
-targets = [c for c in [aqi_col, no2_col, pm25_col] if c]
+targets = [c for c in [no2_col, pm25_col, aqi_col] if c]
 
 if not targets:
     st.warning("AQI, NO₂ or PM2.5 columns were not found.")
@@ -339,7 +357,7 @@ if not targets:
 min_date = df[time_col].min().date()
 max_date = df[time_col].max().date()
 
-st.markdown('<div class="main-title">☁️ Model Training and Forcasting</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">☁️ Model Training and Forecasting</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="header-note">Train Random Forest, XGBoost and GRU models using the model-ready dataset from the Feature Engineering & PCA page.</div>',
     unsafe_allow_html=True,
@@ -350,7 +368,7 @@ c_target, c_horizon, c_date = st.columns([1.4, 1.1, 1.8], gap="large")
 with c_target:
     selected_target = st.selectbox("Select Target Parameter", targets, format_func=target_label, key="forecast_target")
 with c_horizon:
-    horizon_label = st.selectbox("Forecast Horizon", ["24 Hours", "48 Hours", "72 Hours"], index=0, key="forecast_horizon")
+    horizon_label = st.selectbox("Forecast Horizon", ["24 Hours"], index=0, key="forecast_horizon")
     future_steps = int(horizon_label.split()[0])
 with c_date:
     date_range = st.date_input("Date Range (for training)", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="forecast_date_range")
@@ -665,26 +683,49 @@ def train_gru_sequence(X_train, X_test, y_train, y_test, epochs=30, lookback=24)
     X_test_g = np.asarray([X_context[i:i + lookback, :] for i in range(len(X_test_s))])
 
     tf.keras.backend.clear_session()
-    tf.random.set_seed(42)
+    tf.keras.utils.set_random_seed(42)
     np.random.seed(42)
+    random.seed(42)
 
     model = Sequential([
         GRU(64, input_shape=(lookback, X_train_g.shape[2]), return_sequences=True),
-        Dropout(0.20),
+        Dropout(0.10),
         GRU(32, return_sequences=False),
-        Dropout(0.15),
+        Dropout(0.10),
         Dense(24, activation="relu"),
         Dense(1),
     ])
     model.compile(optimizer=Adam(learning_rate=0.001), loss="mse")
-    es = EarlyStopping(monitor="val_loss", patience=6, restore_best_weights=True)
+    es = EarlyStopping(
+        monitor="val_loss",
+        patience=6,
+        restore_best_weights=True,
+    )
+    lr = ReduceLROnPlateau(
+        monitor="val_loss",
+        factor=0.5,
+        patience=3,
+        min_lr=1e-5,
+    )
+
+    # Faster and safer than validation_split for Streamlit because it avoids
+    # TensorFlow doing extra internal array handling. The last 15% is kept as
+    # validation to preserve time-series order.
+    val_size = max(1, int(len(X_train_g) * 0.15))
+    X_val, y_val = X_train_g[-val_size:], y_train_g[-val_size:]
+    X_tr, y_tr = X_train_g[:-val_size], y_train_g[:-val_size]
+
+    train_ds = tf.data.Dataset.from_tensor_slices((X_tr, y_tr))
+    train_ds = train_ds.batch(FAST_GRU_BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+
+    val_ds = tf.data.Dataset.from_tensor_slices((X_val, y_val))
+    val_ds = val_ds.batch(FAST_GRU_BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+
     history = model.fit(
-        X_train_g,
-        y_train_g,
-        validation_split=0.15,
+        train_ds,
+        validation_data=val_ds,
         epochs=epochs,
-        batch_size=64,
-        callbacks=[es],
+        callbacks=[es, lr],
         verbose=0,
         shuffle=False,
     )
@@ -695,6 +736,11 @@ def train_gru_sequence(X_train, X_test, y_train, y_test, epochs=30, lookback=24)
     test_pred = y_scaler.inverse_transform(test_pred_s).ravel()
     y_train_eval = y_train.iloc[lookback:].reset_index(drop=True)
     y_test_eval = y_test.reset_index(drop=True)
+
+
+    # Free large temporary arrays while keeping the trained model inside pack.
+    del X_train_g, y_train_g, X_test_g, X_context, X_train_s, X_test_s, y_train_s
+    gc.collect()
 
     pack = {
         "model": model,
@@ -922,7 +968,7 @@ def train_models_for_selected_target(data, target, run_tree=True, run_gru=True, 
             st.warning(f"GRU skipped: {err}")
         else:
             fitted["GRU"] = pack
-            hp["GRU"] = {"params": {"lookback": pack["lookback"], "hidden_units": "64 + 32", "dropout": "0.20 / 0.15", "learning_rate": 0.001, "epochs": pack["epochs_run"]}, "cv_rmse": np.nan}
+            hp["GRU"] = {"params": {"lookback": pack["lookback"], "hidden_units": "64 + 32", "dropout": "0.10 / 0.10", "learning_rate": 0.001, "epochs": pack["epochs_run"], "batch_size": FAST_GRU_BATCH_SIZE, "callbacks": "EarlyStopping + ReduceLROnPlateau"}, "cv_rmse": np.nan}
             tm = metrics_dict(y_test_eval, test_pred)
             results.append({"Model": "GRU", **tm, "Features": dataset["X_train_gru"].shape[1], "Input Type": "Original Sequential Features"})
             train_time = dataset["time_train"].iloc[-len(y_train_eval):].reset_index(drop=True)
@@ -941,9 +987,10 @@ def reset_outputs():
         if k in st.session_state:
             del st.session_state[k]
 
-if st.session_state.get("mf_target") != selected_target:
+current_training_key = (selected_target, str(start_date), str(end_date), horizon_label)
+if st.session_state.get("mf_target") != current_training_key:
     reset_outputs()
-    st.session_state["mf_target"] = selected_target
+    st.session_state["mf_target"] = current_training_key
 
 # ======================================================
 # SECTION 1: RF + XGBOOST
@@ -1038,7 +1085,7 @@ with g3:
     train_gru_clicked = st.button("Train GRU", use_container_width=True)
 
 if train_gru_clicked:
-    with st.spinner("Training GRU with 24/48/72 hour sequence windows..."):
+    with st.spinner("Training GRU with fixed 24-hour sequence window..."):
         if dataset is None:
             # Prepare dataset even if tree models were not trained.
             dataset = prepare_dataset_for_target(df_work, selected_target, use_pca=True)
@@ -1069,10 +1116,10 @@ dataset = st.session_state.get("mf_dataset")
 
 gc1, gc2, gc3, gc4 = st.columns([1.25, 1.15, 1.55, 1.3], gap="small")
 with gc1:
-    st.markdown('<div class="small-title">GRU SEQUENCE WINDOW COMPARISON</div>', unsafe_allow_html=True)
+    st.markdown('<div class="small-title">GRU TRAINING LOSS</div>', unsafe_allow_html=True)
     if "GRU" in fitted:
         st.plotly_chart(plot_gru_loss(fitted["GRU"].get("history", {})), use_container_width=True, config=CONFIG)
-        st.markdown(f'<div class="table-note">Best Window: {fitted["GRU"].get("lookback", "-")} Hours</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="table-note">Window Used: {fitted["GRU"].get("lookback", "-")} Hours</div>', unsafe_allow_html=True)
     else:
         st.info("Click Train GRU.")
 with gc2:
