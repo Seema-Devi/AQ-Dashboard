@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import gc
 
 try:
     from scipy.stats import ks_2samp
@@ -9,7 +10,7 @@ except Exception:
     ks_2samp = None
 
 try:
-    from sklearn.impute import KNNImputer
+    from sklearn.impute import KNNImputer, SimpleImputer
     from sklearn.ensemble import RandomForestRegressor
     from sklearn.linear_model import BayesianRidge
     from sklearn.experimental import enable_iterative_imputer  # noqa: F401
@@ -286,6 +287,146 @@ def render_cleaning():
             if col not in excluded
         ]
 
+
+    def optimise_memory(dataframe):
+        """Reduce dataframe memory before heavy cleaning."""
+        optimised = dataframe.copy()
+
+        for col in optimised.select_dtypes(include=["float64"]).columns:
+            optimised[col] = pd.to_numeric(optimised[col], downcast="float")
+
+        for col in optimised.select_dtypes(include=["int64"]).columns:
+            optimised[col] = pd.to_numeric(optimised[col], downcast="integer")
+
+        for col in optimised.select_dtypes(include=["object"]).columns:
+            unique_ratio = optimised[col].nunique(dropna=True) / max(len(optimised), 1)
+            if unique_ratio < 0.5:
+                optimised[col] = optimised[col].astype("category")
+
+        return optimised
+
+    def get_missing_numeric_columns(dataframe, numeric_columns):
+        """Impute only numeric columns that really have missing values."""
+        return [col for col in numeric_columns if col in dataframe.columns and dataframe[col].isna().any()]
+
+
+
+    def apply_time_series_fallback_imputation(dataframe, numeric_columns, time_col=None, reason="selected method failed"):
+        """
+        Academic fallback for air-quality time series.
+        Uses temporal structure before using a final median emergency fill:
+        1. time/linear interpolation
+        2. 24-period rolling mean
+        3. forward fill + backward fill
+        4. column median only for any remaining missing values
+        """
+        fallback_df = dataframe.copy()
+        numeric_columns = [col for col in numeric_columns if col in fallback_df.columns]
+        missing_before = int(fallback_df[numeric_columns].isna().sum().sum()) if numeric_columns else 0
+        steps_used = []
+
+        for col in numeric_columns:
+            fallback_df[col] = pd.to_numeric(fallback_df[col], errors="coerce")
+
+        # Sort by detected datetime column so interpolation follows the real time order.
+        original_index = fallback_df.index
+        sorted_by_time = False
+        if time_col and time_col in fallback_df.columns:
+            fallback_df[time_col] = pd.to_datetime(fallback_df[time_col], errors="coerce")
+            fallback_df = fallback_df.sort_values(time_col)
+            sorted_by_time = True
+
+        # 1) Time interpolation if a valid datetime index exists; otherwise linear interpolation.
+        try:
+            if time_col and time_col in fallback_df.columns and fallback_df[time_col].notna().sum() > 1:
+                temp = fallback_df.set_index(time_col)
+                temp[numeric_columns] = temp[numeric_columns].interpolate(
+                    method="time",
+                    limit_direction="both"
+                )
+                fallback_df = temp.reset_index()
+                steps_used.append("time interpolation")
+            else:
+                fallback_df[numeric_columns] = fallback_df[numeric_columns].interpolate(
+                    method="linear",
+                    limit_direction="both"
+                )
+                steps_used.append("linear interpolation")
+        except Exception:
+            fallback_df[numeric_columns] = fallback_df[numeric_columns].interpolate(
+                method="linear",
+                limit_direction="both"
+            )
+            steps_used.append("linear interpolation")
+
+        # 2) Rolling mean fallback. 24 periods is suitable for hourly air-quality data.
+        for col in numeric_columns:
+            if fallback_df[col].isna().any():
+                rolling_mean = fallback_df[col].rolling(window=24, min_periods=1).mean()
+                before = int(fallback_df[col].isna().sum())
+                fallback_df[col] = fallback_df[col].fillna(rolling_mean)
+                after = int(fallback_df[col].isna().sum())
+                if after < before and "24-period rolling mean" not in steps_used:
+                    steps_used.append("24-period rolling mean")
+
+        # 3) Forward fill and backward fill to preserve neighbouring time-series continuity.
+        before_ffill = int(fallback_df[numeric_columns].isna().sum().sum()) if numeric_columns else 0
+        if before_ffill > 0:
+            fallback_df[numeric_columns] = fallback_df[numeric_columns].ffill().bfill()
+            after_ffill = int(fallback_df[numeric_columns].isna().sum().sum()) if numeric_columns else 0
+            if after_ffill < before_ffill:
+                steps_used.append("forward fill/backward fill")
+
+        # 4) Emergency median only if a whole column is still missing or edge cases remain.
+        emergency_median_used = False
+        for col in numeric_columns:
+            if fallback_df[col].isna().any():
+                median_value = fallback_df[col].median()
+                if pd.isna(median_value):
+                    median_value = 0
+                fallback_df[col] = fallback_df[col].fillna(median_value)
+                emergency_median_used = True
+
+        if emergency_median_used:
+            steps_used.append("median emergency fill for remaining values only")
+
+        if sorted_by_time:
+            # Preserve the original row order as much as possible after cleaning.
+            fallback_df.index = original_index
+            fallback_df = fallback_df.sort_index()
+
+        missing_after = int(fallback_df[numeric_columns].isna().sum().sum()) if numeric_columns else 0
+        fallback_df.attrs["final_imputation_method_used"] = "Time-series fallback after selected ML method failed"
+        fallback_df.attrs["fallback_used"] = True
+        fallback_df.attrs["fallback_reason"] = str(reason)[:250]
+        fallback_df.attrs["fallback_steps"] = ", ".join(steps_used) if steps_used else "No fallback step required"
+        fallback_df.attrs["fallback_missing_before"] = missing_before
+        fallback_df.attrs["fallback_missing_after"] = missing_after
+        fallback_df.attrs["emergency_median_used"] = emergency_median_used
+        return fallback_df
+
+    def estimate_imputation_load(rows, cols):
+        """Give the user a warning only. Do not change the selected best method automatically."""
+        cells = rows * max(cols, 1)
+        if rows > 60000 or cells > 900000:
+            return "High"
+        if rows > 25000 or cells > 500000:
+            return "Medium"
+        return "Normal"
+
+    def transform_in_chunks(imputer, X, chunk_size=10000):
+        """Transform data in chunks so the app does not allocate one huge imputed array."""
+        chunks = []
+        for start in range(0, len(X), chunk_size):
+            end = min(start + chunk_size, len(X))
+            chunk = X.iloc[start:end]
+            chunk_values = imputer.transform(chunk)
+            chunks.append(pd.DataFrame(chunk_values, columns=X.columns, index=chunk.index))
+            del chunk_values
+            gc.collect()
+        return pd.concat(chunks, axis=0)
+
+
     def get_fast_comparison_columns(dataframe, numeric_columns):
         """Use only important air-quality columns for method comparison."""
         priority_names = [
@@ -397,31 +538,106 @@ def render_cleaning():
 
         return KNNImputer(n_neighbors=4, weights="distance")
 
-    def apply_imputation_method(dataframe, numeric_columns, method, time_col=None, max_iter=2):
+    def apply_imputation_method(
+        dataframe,
+        numeric_columns,
+        method,
+        time_col=None,
+        max_iter=2,
+        sample_fit_rows=8000,
+        chunk_size=10000
+    ):
+        """
+        Memory-safe imputation:
+        - uses the automatically selected best method first
+        - only imputes columns that contain missing values
+        - limits time-feature/model columns
+        - fits heavy imputers on a representative sample
+        - transforms in chunks
+        - uses time-series fallback if the selected method fails; median is only the final emergency fill for remaining values
+        """
         imputed_df = dataframe.copy()
 
         if not numeric_columns:
             return imputed_df
 
+        numeric_columns = [col for col in numeric_columns if col in imputed_df.columns]
+        missing_numeric_cols = get_missing_numeric_columns(imputed_df, numeric_columns)
+
+        if not missing_numeric_cols:
+            return imputed_df
+
+        for col in numeric_columns:
+            imputed_df[col] = pd.to_numeric(imputed_df[col], errors="coerce")
+
+        # Academic/assessment logic:
+        # Always try the selected best method first. Median is only an emergency fallback.
+        imputed_df.attrs["final_imputation_method_used"] = method
+        imputed_df.attrs["fallback_used"] = False
+
+        if not SKLEARN_AVAILABLE:
+            return apply_time_series_fallback_imputation(
+                imputed_df,
+                missing_numeric_cols,
+                time_col=time_col,
+                reason=f"scikit-learn unavailable; selected method was {method}"
+            )
+
         model_df, time_features = add_time_features_for_imputation(imputed_df, time_col)
-        model_columns = numeric_columns + [col for col in time_features if col not in numeric_columns]
+
+        # Use all missing columns plus a small number of complete/mostly complete helper columns.
+        helper_cols = []
+        for col in numeric_columns:
+            if col not in missing_numeric_cols:
+                helper_cols.append(col)
+            if len(helper_cols) >= 8:
+                break
+
+        model_columns = missing_numeric_cols + helper_cols + [col for col in time_features if col not in missing_numeric_cols + helper_cols]
+        model_columns = list(dict.fromkeys([col for col in model_columns if col in model_df.columns]))
+
         X = model_df[model_columns].apply(pd.to_numeric, errors="coerce")
 
         for col in model_columns:
             if X[col].isna().all():
                 X[col] = 0
 
-        if not SKLEARN_AVAILABLE:
-            imputed_values = X.fillna(X.median(numeric_only=True)).fillna(0)
-        else:
-            try:
-                imputer = make_imputer(method, max_iter=max_iter)
-                imputed_array = imputer.fit_transform(X)
-                imputed_values = pd.DataFrame(imputed_array, columns=model_columns, index=imputed_df.index)
-            except Exception:
-                imputed_values = X.fillna(X.median(numeric_only=True)).fillna(0)
+        try:
+            if method == "KNN":
+                # KNN is distance-based, so keep the fit sample small.
+                fit_rows = min(sample_fit_rows, 3000, len(X))
+            else:
+                fit_rows = min(sample_fit_rows, len(X))
 
-        imputed_df[numeric_columns] = imputed_values[numeric_columns]
+            if len(X) > fit_rows:
+                X_fit = X.sample(fit_rows, random_state=42)
+            else:
+                X_fit = X
+
+            imputer = make_imputer(method, max_iter=max_iter)
+            imputer.fit(X_fit)
+
+            if len(X) > chunk_size:
+                imputed_values = transform_in_chunks(imputer, X, chunk_size=chunk_size)
+            else:
+                imputed_array = imputer.transform(X)
+                imputed_values = pd.DataFrame(imputed_array, columns=model_columns, index=imputed_df.index)
+
+            imputed_df[missing_numeric_cols] = imputed_values[missing_numeric_cols]
+
+            del X, X_fit, imputer, imputed_values
+            gc.collect()
+
+        except Exception as exc:
+            # Stronger academic fallback for air-quality time series.
+            # This keeps temporal patterns better than replacing values with a static median.
+            return apply_time_series_fallback_imputation(
+                imputed_df,
+                missing_numeric_cols,
+                time_col=time_col,
+                reason=f"{method} failed: {str(exc)[:200]}"
+            )
+
         return imputed_df
 
     @st.cache_data(show_spinner=False)
@@ -620,6 +836,9 @@ def render_cleaning():
             })
         return pd.DataFrame(rows)
 
+    # Reduce memory early so large uploaded files are less likely to crash Streamlit.
+    df = optimise_memory(df)
+
     # =========================
     # 1. DATASET BEFORE CLEANING
     # =========================
@@ -733,34 +952,69 @@ def render_cleaning():
     section_header("5", "Run Final Cleaning")
 
     if st.button("Run Final Data Cleaning"):
-        df_cleaned = df.copy()
+        df_cleaned = optimise_memory(df)
         final_numeric_cols = get_model_numeric_columns(df_cleaned)
+        final_missing_numeric_cols = get_missing_numeric_columns(df_cleaned, final_numeric_cols)
+        final_method_used = auto_best_method
+        imputation_load = estimate_imputation_load(
+            len(df_cleaned),
+            len(final_missing_numeric_cols)
+        )
 
         for col in final_numeric_cols:
             df_cleaned[col] = pd.to_numeric(df_cleaned[col], errors="coerce")
 
-        # Fast final pass: selected method only, lower iterations.
-        df_cleaned = apply_imputation_method(
-            df_cleaned,
-            final_numeric_cols,
-            method=auto_best_method,
-            time_col=time_col,
-            max_iter=3
-        )
+        if imputation_load in ["Medium", "High"]:
+            st.info(
+                f"The dataset is {imputation_load.lower()} load, so the app will still try the selected best method "
+                f"({auto_best_method}) using sample fitting and chunked transformation. "
+                "If it fails, the app will use time-series interpolation/rolling fallback. Median is only the final emergency fill for values that still remain missing."
+            )
 
-        # Final numeric fallback if any values remain missing.
-        for col in final_numeric_cols:
-            if df_cleaned[col].isna().any():
-                median_value = df_cleaned[col].median()
-                if pd.isna(median_value):
-                    median_value = 0
-                df_cleaned[col] = df_cleaned[col].fillna(median_value)
+        with st.spinner(f"Cleaning dataset using selected best method: {auto_best_method}..."):
+            df_cleaned = apply_imputation_method(
+                df_cleaned,
+                final_numeric_cols,
+                method=auto_best_method,
+                time_col=time_col,
+                max_iter=2,
+                sample_fit_rows=8000,
+                chunk_size=5000
+            )
+
+        final_method_used = df_cleaned.attrs.get("final_imputation_method_used", auto_best_method)
+        fallback_used = bool(df_cleaned.attrs.get("fallback_used", False))
+        fallback_steps = df_cleaned.attrs.get("fallback_steps", "Not used")
+        emergency_median_used = bool(df_cleaned.attrs.get("emergency_median_used", False))
+
+        # Final safety check: use time-series fallback for any remaining numeric missing values.
+        # Median is only used inside that function if interpolation/rolling/ffill cannot fill edge cases.
+        if final_numeric_cols and df_cleaned[final_numeric_cols].isna().sum().sum() > 0:
+            df_cleaned = apply_time_series_fallback_imputation(
+                df_cleaned,
+                final_numeric_cols,
+                time_col=time_col,
+                reason="remaining missing values after selected method"
+            )
+            final_method_used = df_cleaned.attrs.get("final_imputation_method_used", final_method_used)
+            fallback_used = bool(df_cleaned.attrs.get("fallback_used", fallback_used))
+            fallback_steps = df_cleaned.attrs.get("fallback_steps", fallback_steps)
+            emergency_median_used = bool(df_cleaned.attrs.get("emergency_median_used", emergency_median_used))
 
         df_cleaned, object_fill_summary = fill_object_columns(df_cleaned)
         df_cleaned = df_cleaned.drop_duplicates().reset_index(drop=True)
         st.session_state["df_cleaned"] = df_cleaned
 
-        st.success(f"✅ Dataset cleaned successfully using {auto_best_method} and saved for EDA / Feature Engineering.")
+        if fallback_used:
+            st.warning(
+                f"⚠️ {auto_best_method} was selected as the best method, but it failed during full-data cleaning. "
+                "A time-series fallback was used instead of direct median fallback. Median is only used for any values still missing after interpolation, rolling mean, and forward/backward fill."
+            )
+            st.info(f"Fallback steps used: {fallback_steps}")
+        else:
+            st.success(f"✅ Dataset cleaned successfully using the selected best method: {final_method_used}.")
+
+        st.info("Cleaned dataset saved for EDA / Feature Engineering.")
 
         section_header("6", "Cleaning Results")
 
@@ -769,12 +1023,13 @@ def render_cleaning():
             if df_cleaned.shape[0] > 0 and df_cleaned.shape[1] > 0 else 0
         )
 
-        c1, c2, c3, c4, c5 = st.columns(5)
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
         kpi_card(c1, "Final Rows", f"{df_cleaned.shape[0]:,}", "blue-card")
         kpi_card(c2, "Final Columns", df_cleaned.shape[1], "green-card")
         kpi_card(c3, "Final Missing %", f"{missing_after_pct:.2f}%", "orange-card")
         kpi_card(c4, "Duplicates Removed", duplicates_removed, "red-card")
-        kpi_card(c5, "Method", auto_best_method, "purple-card")
+        kpi_card(c5, "Best Method", auto_best_method, "purple-card")
+        kpi_card(c6, "Used Method", final_method_used, "green-card" if not fallback_used else "orange-card")
 
         before_missing = df_before.isnull().sum()
         after_missing = df_cleaned.isnull().sum()
@@ -814,7 +1069,12 @@ Data Cleaning Summary:
 - Fast imputation comparison used columns: {comparison_cols}
 - Compared KNN, MissForest-style, and MICE using KS distribution similarity only
 - Automatically selected final imputation method: {auto_best_method}
-- Final cleaning ran the selected method only once
+- Best selected imputation method: {auto_best_method}
+- Actual final method used: {final_method_used}
+- Fallback used: {fallback_used}
+- Fallback steps used: {fallback_steps}
+- Emergency median used for remaining values only: {emergency_median_used}
+- Final cleaning first attempted the selected best method using sample fitting and chunked transformation
 - Possible outliers were flagged for review, not automatically removed
 - Categorical missing values filled using mode where possible
 - Cleaned dataset saved as st.session_state["df_cleaned"]
