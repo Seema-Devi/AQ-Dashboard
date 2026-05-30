@@ -61,6 +61,7 @@ def render_visualisation():
         "WS": "m/s",
         "WD": "°",
         "TRAFFICV": "vehicle/hr",
+        "CITY_CENTRE_TVCOUNT": "count/hr",
         "TOTAL_PEDESTRIANS": "count/hr"
     }
 
@@ -74,6 +75,7 @@ def render_visualisation():
         "WS": "Wind Speed",
         "WD": "Wind Direction",
         "TRAFFICV": "Traffic Volume",
+        "CITY_CENTRE_TVCOUNT": "City Centre TV Count",
         "TOTAL_PEDESTRIANS": "Total Pedestrians"
     }
 
@@ -437,7 +439,8 @@ def render_visualisation():
     def make_correlation_heatmap():
         corr_cols = available([
             "AQI", "PM2.5", "PM10", "NO2", "TEMP",
-            "RH", "WS", "TRAFFICV", "TOTAL_PEDESTRIANS"
+            "RH", "WS", "WD", "TRAFFICV",
+            "CITY_CENTRE_TVCOUNT", "TOTAL_PEDESTRIANS"
         ])
 
         if len(corr_cols) < 2:
@@ -509,7 +512,8 @@ def render_visualisation():
         if time_col and numeric_cols:
             trend_options = available([
                 "AQI", "PM2.5", "NO2", "PM10",
-                "TEMP", "WS", "TRAFFICV", "TOTAL_PEDESTRIANS"
+                "TEMP", "WS", "WD", "TRAFFICV",
+                "CITY_CENTRE_TVCOUNT", "TOTAL_PEDESTRIANS"
             ])
 
             default_trend = available(["AQI", "PM2.5", "NO2"])
@@ -884,7 +888,7 @@ def render_visualisation():
     # 5. CORRELATION HEATMAP
     # =========================================================
     with st.container(border=True):
-        h_left, h_right = st.columns([3, 1], gap="medium")
+        h_left, h_right = st.columns([6, 4], gap="medium")
         with h_left:
             section_header("5", "Correlation Heatmap")
         with h_right:

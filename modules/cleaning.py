@@ -206,7 +206,7 @@ def render_cleaning():
 
     def scientific_negative_columns(dataframe):
         physically_non_negative_names = [
-            "AQI", "PM2.5", "PM25", "PM_2_5", "PM10", "NO", "NO2", "NOX", "SO2", "CO", "O3",
+            "AQI", "PM2.5", "PM25", "PM_2_5", "PM10", "NO", "NO2", "NOX",
             "WS", "WIND_SPEED", "WINDSPEED", "TRAFFICV", "TRAFFIC", "TOTAL_PEDESTRIANS",
             "CITY_CENTRE_TVCOUNT", "PEDESTRIANS", "COUNT", "VOLUME"
         ]
@@ -430,7 +430,7 @@ def render_cleaning():
     def get_fast_comparison_columns(dataframe, numeric_columns):
         """Use only important air-quality columns for method comparison."""
         priority_names = [
-            "AQI", "PM2.5", "PM25", "PM_2_5", "PM10", "NO2", "NO", "NOX", "O3", "SO2", "CO",
+            "AQI", "PM2.5", "PM25", "PM_2_5", "PM10", "NO2", "NO", "NOX",
             "TEMP", "TEMPERATURE", "RH", "HUMIDITY", "RELATIVE_HUMIDITY", "WS", "WIND_SPEED", "WINDSPEED",
             "WD", "WIND_DIRECTION", "TRAFFICV", "TRAFFIC", "TOTAL_PEDESTRIANS", "CITY_CENTRE_TVCOUNT"
         ]

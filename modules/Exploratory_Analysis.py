@@ -206,6 +206,13 @@ def render_eda():
     wind_dir_col = find_col(["wind direction", "winddirection", "wd"])
     traffic_col = find_col(["traffic volume", "traffic", "vehicle", "cars"])
     ped_col = find_col(["pedestrian", "pedestrians", "total pedestrians", "footfall"])
+    city_tv_col = find_col([
+        "CITY_CENTRE_TVCOUNT",
+        "City_Centre_TVCount",
+        "city centre tv count",
+        "city centre",
+        "tvcount"
+    ])
 
     main_targets = [c for c in [aqi_col, pm25_col, no2_col] if c]
 
@@ -811,6 +818,7 @@ def render_eda():
         "Humidity": humidity_col,
         "Wind Speed": wind_speed_col,
         "Traffic Volume": traffic_col,
+        "City Centre TV Count": city_tv_col,
         "Pedestrians": ped_col,
     }
 
@@ -867,6 +875,7 @@ def render_eda():
         ("PM2.5", pm25_col),
         ("NO2", no2_col),
         ("Traffic Volume", traffic_col),
+        ("City Centre TV Count", city_tv_col),
         ("Temperature", temp_col),
         ("Wind Speed", wind_speed_col),
         ("Humidity", humidity_col),
