@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>AQI Forecasting Portfolio – GDDA713</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Poppins', sans-serif;
+            background: #f4f6f9;
+            color: #222;
+        }
+
+        /* NAVBAR */
+        nav {
+            background: #003366;
+            padding: 15px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: white;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        nav a {
+            color: white;
+            margin-left: 20px;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        nav a:hover {
+            text-decoration: underline;
+        }
+
+        /* HEADER */
+        header {
+            background: linear-gradient(to right, #003366, #0059b3);
+            color: white;
+            padding: 80px 40px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 42px;
+            margin-bottom: 10px;
+        }
+
+        /* SECTIONS */
+        section {
+            width: 85%;
+            margin: 30px auto;
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 0 12px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            color: #003366;
+            margin-bottom: 10px;
+        }
+
+        /* TABLES */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        table th,
+        table td {
+            border: 1px solid #ddd;
+            padding: 12px;
+        }
+
+        table th {
+            background: #003366;
+            color: white;
+        }
+
+        /* CARDS */
+        .card-container {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .card {
+            flex: 1;
+            min-width: 250px;
+            background: #eaf2ff;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 6px solid #003366;
+        }
+
+        /* FOOTER */
+        footer {
+            background: #003366;
+            color: white;
+            text-align: center;
+            padding: 20px;
+            margin-top: 40px;
+        }
+
+        /* RESPONSIVE */
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 30px;
+            }
+
+            section {
+                width: 95%;
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- NAVIGATION -->
+    <nav>
+        <div><strong>AQI Forecasting Portfolio</strong></div>
+        <div>
+            <a href="#overview">Overview</a>
+            <a href="#cleaning">Data Cleaning</a>
+            <a href="#features">Feature Engineering</a>
+            <a href="#models">Models</a>
+            <a href="#dashboard">Dashboard</a>
+            <a href="#github">GitHub</a>
+        </div>
+    </nav>
+
+    <!-- HEADER -->
+    <header>
+        <h1>AI‑Driven Air Quality Forecasting & Analysis</h1>
+        <h3>GDDA713 Capstone Project – NZSE</h3>
+        <p>Team: Seema • Deshika • Yaqing</p>
+    </header>
+
+    <!-- OVERVIEW -->
+    <section id="overview">
+        <h2>1. Project Overview</h2>
+        <p>
+            This project develops an AI‑powered forecasting system to analyse and predict short‑term air quality
+            (PM2.5, NO₂, AQI) in Auckland City Centre. The system integrates air quality, meteorological, traffic,
+            and pedestrian datasets to support Auckland Council with proactive environmental planning.
+        </p>
+
+        <div class="card-container">
+            <div class="card"><strong>✔ Data Cleaning Pipeline</strong><br>Complete preprocessing workflow</div>
+            <div class="card"><strong>✔ Feature Engineering</strong><br>Lag, rolling, cyclical, interaction features
+            </div>
+            <div class="card"><strong>✔ ML Models</strong><br>Random Forest, XGBoost, LSTM</div>
+            <div class="card"><strong>✔ Streamlit Dashboard</strong><br>Interactive multi‑page UI</div>
+        </div>
+    </section>
+
+    <!-- TEAM -->
+    <section>
+        <h2>2. Team Roles</h2>
+        <table>
+            <tr>
+                <th>Member</th>
+                <th>Role</th>
+                <th>Responsibilities</th>
+            </tr>
+            <tr>
+                <td>Seema</td>
+                <td>ML & Dashboard Developer</td>
+                <td>Feature engineering, model development, Streamlit UI</td>
+            </tr>
+            <tr>
+                <td>Deshika</td>
+                <td>Data Processing</td>
+                <td>Data cleaning, EDA, documentation</td>
+            </tr>
+            <tr>
+                <td>Yaqing</td>
+                <td>Data Preparation</td>
+                <td>Dataset merging, visualisation</td>
+            </tr>
+        </table>
+    </section>
+
+    <!-- DATA CLEANING -->
+    <section id="cleaning">
+        <h2>3. Data Cleaning Methods</h2>
+        <ul>
+            <li><b>Missing Value Handling:</b> Forward fill, backward fill, median imputation.</li>
+            <li><b>Datetime Standardisation:</b> Unified timestamp formatting.</li>
+            <li><b>Dataset Merging:</b> Timestamp‑aligned merging of all datasets.</li>
+            <li><b>Duplicate & Invalid Removal:</b> Removal of duplicates and negative values.</li>
+            <li><b>Numeric Validation:</b> Conversion to numeric types.</li>
+            <li><b>Outlier Detection:</b> Boxplots and statistical summaries.</li>
+            <li><b>Column Standardisation:</b> Clean variable names.</li>
+            <li><b>Time‑Series Continuity:</b> No row deletions.</li>
+        </ul>
+    </section>
+
+    <!-- FEATURE ENGINEERING -->
+    <section id="features">
+        <h2>4. Feature Engineering</h2>
+        <table>
+            <tr>
+                <th>Feature Type</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td>Cyclical Time</td>
+                <td>hour_sin, hour_cos, weekday_sin, weekday_cos</td>
+            </tr>
+            <tr>
+                <td>Lag Features</td>
+                <td>lag_1, lag_2, lag_3, lag_6, lag_12, lag_24</td>
+            </tr>
+            <tr>
+                <td>Rolling Stats</td>
+                <td>rolling_mean, rolling_std</td>
+            </tr>
+            <tr>
+                <td>Seasonal</td>
+                <td>month, season</td>
+            </tr>
+            <tr>
+                <td>Interaction</td>
+                <td>traffic_dispersion, thermal_humidity_index, pm25_no2_ratio</td>
+            </tr>
+            <tr>
+                <td>Multicollinearity</td>
+                <td>Correlation filtering</td>
+            </tr>
+        </table>
+    </section>
+
+    <!-- MODELS -->
+    <section id="models">
+        <h2>5. Machine Learning Models</h2>
+        <ul>
+            <li><b>Random Forest:</b> Nonlinear baseline model</li>
+            <li><b>XGBoost:</b> High‑accuracy boosting model</li>
+            <li><b>LSTM:</b> Deep learning time‑series model</li>
+        </ul>
+        <p>Metrics used: RMSE, MAE, R²</p>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section id="dashboard">
+        <h2>6. Dashboard Features</h2>
+        <ul>
+            <li>Multi‑page Streamlit application</li>
+            <li>Data upload & merging</li>
+            <li>Automated data cleaning</li>
+            <li>EDA visualisations</li>
+            <li>Feature engineering summary</li>
+            <li>Model training & evaluation</li>
+            <li>24‑hour AQI/PM₂.₅/NO₂ forecasting</li>
+            <li>Downloadable results</li>
+        </ul>
+    </section>
+
+    <!-- GITHUB -->
+    <section id="github">
+        <h2>7. GitHub Repository</h2>
+        <p><b>Repository Link:</b> Add your GitHub link here</p>
+    </section>
+
+    <footer>
+        © 2026 GDDA713 Capstone Project – NZSE
+    </footer>
+
+</body>
+
+</html>

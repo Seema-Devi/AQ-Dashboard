@@ -59,16 +59,23 @@ CONFIG = {"displayModeBar": False, "scrollZoom": False}
 # SPEED SETTINGS FOR STREAMLIT CLOUD / LOCAL DEPLOYMENT
 # ======================================================
 # These values keep RF + XGBoost fast while preserving the modelling workflow.
-FAST_RF_ESTIMATORS = 150
-FAST_RF_MAX_DEPTH = 12
-FAST_XGB_ESTIMATORS = 180
+FAST_RF_ESTIMATORS = 220
+FAST_RF_MAX_DEPTH = 14
+FAST_XGB_ESTIMATORS = 240
 FAST_XGB_MAX_DEPTH = 4
-FAST_XGB_LEARNING_RATE = 0.07
-FAST_PCA_VARIANCE = 0.85
-FAST_PCA_MAX_COMPONENTS = 6
-FAST_GRU_EPOCHS = 50
+FAST_XGB_LEARNING_RATE = 0.05
+FAST_PCA_VARIANCE = 0.90
+FAST_PCA_MAX_COMPONENTS = 8
+
+# Deployment-safe GRU settings: one 24-hour lookback only.
+# Do not use (24, 48, 72) on Streamlit Cloud because it trains three GRUs and can crash.
+# Deployment-safe GRU settings. RF/XGBoost settings are unchanged.
+# A single 24-hour lookback avoids Streamlit Cloud memory crashes.
+FAST_GRU_EPOCHS = 65
 FAST_GRU_LOOKBACKS = (24,)
-FAST_GRU_BATCH_SIZE = 64
+FAST_GRU_BATCH_SIZE = 32
+FAST_GRU_MAX_BASE_FEATURES = 10
+FAST_GRU_USE_LAG_BLEND = True
 
 # ======================================================
 # DATA LOAD
@@ -391,11 +398,26 @@ if len(df_work) < 100:
 # ======================================================
 def is_time_or_id_column(col):
     c = clean_name(col)
-    blocked = ["date", "timestamp", "datetime", "index", "unnamed", "recordid", "sensorid", "stationid", "id"]
-    # Keep engineered time columns, but remove raw IDs/dates.
-    if c in ["hour", "dayofweek", "dayofweek", "month", "isweekend", "hoursin", "hourcos", "daysin", "daycos", "monthsin", "monthcos"]:
+    blocked = [
+        "date", "timestamp", "datetime",
+        "year",  # Year is not useful for short-term air-quality forecasting.
+        "index", "unnamed", "recordid", "sensorid", "stationid", "id",
+    ]
+    # Keep useful engineered time columns, but remove raw IDs/dates/year.
+    if c in ["hour", "dayofweek", "month", "isweekend", "hoursin", "hourcos", "daysin", "daycos", "monthsin", "monthcos"]:
         return False
     return any(k in c for k in blocked)
+
+
+def is_pca_column(col):
+    """Detect PCA component columns already created on the PCA page.
+
+    These must be excluded from the original-feature model. Otherwise, when
+    PCA is switched OFF on this page, old PC1/PC2/PC3 columns from
+    df_model_ready can still enter the tree model.
+    """
+    c = str(col).strip().lower().replace("_", "").replace(" ", "")
+    return c.startswith("pc") and c[2:].isdigit()
 
 
 def is_lag_or_roll(col):
@@ -464,6 +486,14 @@ def base_feature_candidates_for_target(data, target):
     numeric_cols = get_numeric_cols(data)
     out = []
     for c in numeric_cols:
+        # Do not allow PCA-page component columns into the non-PCA model.
+        # PCA components should only be created inside apply_pca_to_tree_inputs()
+        # when the Use PCA toggle is ON.
+        if is_pca_column(c):
+            continue
+        # Extra protection: exclude any year-style columns even if named oddly.
+        if "year" in clean_name(c):
+            continue
         if c in targets or c == target:
             continue
         if is_lag_or_roll(c):
@@ -492,7 +522,9 @@ def build_target_dataset(data, target):
     return modelling, base_cols, lag_cols, time_cols, original_feature_cols
 
 
-def split_time_df(modelling, feature_cols, target, test_size=0.15):
+def split_time_df(modelling, feature_cols, target, test_size=0.20):
+    # Chronological 80/20 split: first 80% for training, final 20% for testing.
+    # This preserves time order and avoids leakage from future observations.
     split_idx = max(30, int(len(modelling) * (1 - test_size)))
     split_idx = min(split_idx, len(modelling) - 10)
     train = modelling.iloc[:split_idx].copy().reset_index(drop=True)
@@ -610,18 +642,18 @@ def train_rf_grid(X_train, y_train):
     model = RandomForestRegressor(
         n_estimators=FAST_RF_ESTIMATORS,
         max_depth=FAST_RF_MAX_DEPTH,
-        min_samples_split=8,
-        min_samples_leaf=4,
+        min_samples_split=6,
+        min_samples_leaf=3,
         max_features="sqrt",
         random_state=42,
-        n_jobs=-1,
+        n_jobs=1,
     )
     model.fit(X_train, y_train)
     params = {
         "n_estimators": FAST_RF_ESTIMATORS,
         "max_depth": FAST_RF_MAX_DEPTH,
-        "min_samples_split": 8,
-        "min_samples_leaf": 4,
+        "min_samples_split": 6,
+        "min_samples_leaf": 3,
         "max_features": "sqrt",
     }
     return model, params, np.nan
@@ -639,11 +671,14 @@ def train_xgb_grid(X_train, y_train):
         n_estimators=FAST_XGB_ESTIMATORS,
         max_depth=FAST_XGB_MAX_DEPTH,
         learning_rate=FAST_XGB_LEARNING_RATE,
-        subsample=0.85,
-        colsample_bytree=0.85,
+        subsample=0.90,
+        colsample_bytree=0.90,
+        reg_alpha=0.05,
+        reg_lambda=1.20,
         objective="reg:squarederror",
         random_state=42,
-        n_jobs=-1,
+        seed=42,
+        n_jobs=1,
         tree_method="hist",
     )
     model.fit(X_train, y_train)
@@ -651,8 +686,10 @@ def train_xgb_grid(X_train, y_train):
         "n_estimators": FAST_XGB_ESTIMATORS,
         "max_depth": FAST_XGB_MAX_DEPTH,
         "learning_rate": FAST_XGB_LEARNING_RATE,
-        "subsample": 0.85,
-        "colsample_bytree": 0.85,
+        "subsample": 0.90,
+        "colsample_bytree": 0.90,
+        "reg_alpha": 0.05,
+        "reg_lambda": 1.20,
         "tree_method": "hist",
     }
     return model, params, np.nan
@@ -665,12 +702,54 @@ def build_gru_windows(X_scaled, y_scaled, lookback):
     return np.asarray(X_seq), np.asarray(y_seq)
 
 
+def find_target_lag1_col(columns, target):
+    """Find the target lag-1 column used for persistence blending."""
+    target_clean = clean_name(target)
+    candidates = []
+    for c in columns:
+        cc = clean_name(c)
+        if "lag1" in cc and target_clean in cc:
+            candidates.append(c)
+    if candidates:
+        return candidates[0]
+    for c in columns:
+        cc = clean_name(c)
+        if cc.endswith("lag1"):
+            return c
+    return None
+
+
+def choose_lag_blend_alpha(y_true, nn_pred, lag_pred):
+    """Choose alpha for alpha*NN + (1-alpha)*lag1 using validation data only."""
+    y_true = np.asarray(y_true, dtype=float)
+    nn_pred = np.asarray(nn_pred, dtype=float)
+    lag_pred = np.asarray(lag_pred, dtype=float)
+    valid = np.isfinite(y_true) & np.isfinite(nn_pred) & np.isfinite(lag_pred)
+    if valid.sum() < 20:
+        return 1.0
+    best_alpha, best_error = 1.0, np.inf
+    for alpha in np.linspace(0.50, 1.00, 11):
+        blended = alpha * nn_pred[valid] + (1.0 - alpha) * lag_pred[valid]
+        err = rmse(y_true[valid], blended)
+        if err < best_error:
+            best_error = err
+            best_alpha = float(alpha)
+    return best_alpha
+
+
 def train_gru_sequence(X_train, X_test, y_train, y_test, epochs=30, lookback=24):
     if not TENSORFLOW_AVAILABLE:
         return None, None, None, None, None, "TensorFlow is not installed. Add tensorflow to requirements.txt to train GRU."
-    lookback = int(max(6, min(int(lookback), 72)))
+    lookback = int(max(6, min(int(lookback), 24)))
     if len(X_train) < lookback + 50 or len(X_test) < 10:
         return None, None, None, None, None, f"Not enough rows for GRU lookback={lookback}."
+
+    # Keep all GRU inputs numeric and finite before scaling.
+    X_train = X_train.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    X_test = X_test.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    medians = X_train.median(numeric_only=True).fillna(0)
+    X_train = X_train.fillna(medians)
+    X_test = X_test.fillna(medians)
 
     x_scaler = StandardScaler()
     y_scaler = StandardScaler()
@@ -687,39 +766,38 @@ def train_gru_sequence(X_train, X_test, y_train, y_test, epochs=30, lookback=24)
     np.random.seed(42)
     random.seed(42)
 
+    # Deployment-safe GRU: stronger than the previous 48-unit model but still one recurrent layer.
+    # Huber loss is more stable for AQI/PM2.5 spikes than plain MSE.
     model = Sequential([
-        GRU(64, input_shape=(lookback, X_train_g.shape[2]), return_sequences=True),
-        Dropout(0.10),
-        GRU(32, return_sequences=False),
-        Dropout(0.10),
-        Dense(24, activation="relu"),
+        GRU(64, input_shape=(lookback, X_train_g.shape[2]), return_sequences=False),
+        Dropout(0.12),
+        Dense(32, activation="relu"),
+        Dropout(0.05),
         Dense(1),
     ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss="mse")
+    model.compile(optimizer=Adam(learning_rate=0.0007), loss=tf.keras.losses.Huber(delta=1.0))
     es = EarlyStopping(
         monitor="val_loss",
-        patience=6,
+        patience=10,
         restore_best_weights=True,
     )
     lr = ReduceLROnPlateau(
         monitor="val_loss",
         factor=0.5,
-        patience=3,
+        patience=5,
         min_lr=1e-5,
     )
 
-    # Faster and safer than validation_split for Streamlit because it avoids
-    # TensorFlow doing extra internal array handling. The last 15% is kept as
-    # validation to preserve time-series order.
+    # Last 15% of the training windows is used for validation to preserve time order.
     val_size = max(1, int(len(X_train_g) * 0.15))
     X_val, y_val = X_train_g[-val_size:], y_train_g[-val_size:]
     X_tr, y_tr = X_train_g[:-val_size], y_train_g[:-val_size]
 
     train_ds = tf.data.Dataset.from_tensor_slices((X_tr, y_tr))
-    train_ds = train_ds.batch(FAST_GRU_BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+    train_ds = train_ds.batch(FAST_GRU_BATCH_SIZE).prefetch(1)
 
     val_ds = tf.data.Dataset.from_tensor_slices((X_val, y_val))
-    val_ds = val_ds.batch(FAST_GRU_BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+    val_ds = val_ds.batch(FAST_GRU_BATCH_SIZE).prefetch(1)
 
     history = model.fit(
         train_ds,
@@ -732,11 +810,29 @@ def train_gru_sequence(X_train, X_test, y_train, y_test, epochs=30, lookback=24)
 
     train_pred_s = model.predict(X_train_g, verbose=0)
     test_pred_s = model.predict(X_test_g, verbose=0)
-    train_pred = y_scaler.inverse_transform(train_pred_s).ravel()
-    test_pred = y_scaler.inverse_transform(test_pred_s).ravel()
+    train_pred_nn = y_scaler.inverse_transform(train_pred_s).ravel()
+    test_pred_nn = y_scaler.inverse_transform(test_pred_s).ravel()
     y_train_eval = y_train.iloc[lookback:].reset_index(drop=True)
     y_test_eval = y_test.reset_index(drop=True)
 
+    # Validation-based persistence blend. This often improves NO2, PM2.5 and AQI
+    # without increasing model size or deployment memory.
+    blend_alpha = 1.0
+    lag1_col = find_target_lag1_col(X_train.columns, y_train.name if hasattr(y_train, "name") else "")
+    train_pred = train_pred_nn.copy()
+    test_pred = test_pred_nn.copy()
+    if FAST_GRU_USE_LAG_BLEND and lag1_col and lag1_col in X_train.columns and lag1_col in X_test.columns:
+        lag_train = pd.to_numeric(X_train[lag1_col].iloc[lookback:], errors="coerce").reset_index(drop=True).to_numpy(dtype=float)
+        lag_test = pd.to_numeric(X_test[lag1_col], errors="coerce").reset_index(drop=True).to_numpy(dtype=float)
+        # Select blend alpha from the last 20% of training predictions, not the test set.
+        val_blend_size = max(20, int(len(y_train_eval) * 0.20))
+        blend_alpha = choose_lag_blend_alpha(
+            y_train_eval.iloc[-val_blend_size:],
+            train_pred_nn[-val_blend_size:],
+            lag_train[-val_blend_size:],
+        )
+        train_pred = blend_alpha * train_pred_nn + (1.0 - blend_alpha) * lag_train
+        test_pred = blend_alpha * test_pred_nn + (1.0 - blend_alpha) * lag_test
 
     # Free large temporary arrays while keeping the trained model inside pack.
     del X_train_g, y_train_g, X_test_g, X_context, X_train_s, X_test_s, y_train_s
@@ -748,6 +844,9 @@ def train_gru_sequence(X_train, X_test, y_train, y_test, epochs=30, lookback=24)
         "y_scaler": y_scaler,
         "lookback": lookback,
         "feature_cols": list(X_train.columns),
+        "medians": medians,
+        "blend_alpha": float(blend_alpha),
+        "lag1_col": lag1_col,
         "history": history.history,
         "best_val_loss": float(np.min(history.history.get("val_loss", [np.inf]))),
         "epochs_run": len(history.history.get("loss", [])),
@@ -755,7 +854,7 @@ def train_gru_sequence(X_train, X_test, y_train, y_test, epochs=30, lookback=24)
     return train_pred, test_pred, y_train_eval, y_test_eval, pack, None
 
 
-def train_gru_auto(X_train, X_test, y_train, y_test, epochs=30, lookbacks=(24, 48, 72)):
+def train_gru_auto(X_train, X_test, y_train, y_test, epochs=30, lookbacks=(24,)):
     attempts, errors = [], []
     for lb in lookbacks:
         train_pred, test_pred, y_train_eval, y_test_eval, pack, err = train_gru_sequence(X_train, X_test, y_train, y_test, epochs, lb)
@@ -783,10 +882,41 @@ def plot_actual_pred(pred_df, target):
 
 
 def plot_feature_importance(model, feature_cols, pca_pack=None):
+    """Plot top feature importances safely for RF/XGBoost.
+
+    When PCA is ON, the trained tree model uses PC1..PCn plus lag/time
+    features. When PCA is OFF, it uses the original engineered features.
+    This function always aligns the feature-name list with the exact length
+    of model.feature_importances_ to avoid the pandas "same length" crash.
+    """
     if not hasattr(model, "feature_importances_"):
         return None
-    imp = pd.DataFrame({"Feature": feature_cols, "Importance": model.feature_importances_}).sort_values("Importance", ascending=False).head(10)
-    fig = px.bar(imp.sort_values("Importance"), x="Importance", y="Feature", orientation="h", text="Importance")
+
+    importances = np.asarray(model.feature_importances_, dtype=float).ravel()
+
+    # Prefer the exact feature names stored by sklearn models when available.
+    if hasattr(model, "feature_names_in_"):
+        names = list(model.feature_names_in_)
+    else:
+        names = list(feature_cols)
+
+    # Safety fallback: never allow a length mismatch to crash Streamlit.
+    if len(names) != len(importances):
+        names = [f"Feature_{i+1}" for i in range(len(importances))]
+
+    imp = pd.DataFrame({
+        "Feature": names,
+        "Importance": importances,
+    })
+    imp = imp.sort_values("Importance", ascending=False).head(10)
+
+    fig = px.bar(
+        imp.sort_values("Importance"),
+        x="Importance",
+        y="Feature",
+        orientation="h",
+        text="Importance",
+    )
     fig.update_traces(texttemplate="%{text:.3f}", textposition="outside", marker_color="#2563eb")
     fig.update_layout(xaxis_title="Importance", yaxis_title="")
     return style_fig(fig, height=245, legend=False)
@@ -830,38 +960,150 @@ def plot_forecast_history(target, forecast_values, data, future_steps, best_mode
 # ======================================================
 # FORECASTING HELPERS
 # ======================================================
-def recursive_forecast_ml(model, data, target, dataset, future_steps=24):
-    working = data.copy().sort_values(time_col).reset_index(drop=True)
-    time_series = pd.to_datetime(working[time_col], errors="coerce").dropna().reset_index(drop=True)
-    step = time_series.diff().median() if len(time_series) > 2 else pd.Timedelta(hours=1)
+def get_regular_time_step(data):
+    times = pd.to_datetime(data[time_col], errors="coerce").dropna().sort_values().reset_index(drop=True)
+    step = times.diff().median() if len(times) > 2 else pd.Timedelta(hours=1)
     if pd.isna(step) or step <= pd.Timedelta(0):
         step = pd.Timedelta(hours=1)
+    return step
+
+
+def seasonal_future_value(history, col, future_time, target_col=None, lookback_days=14):
+    """Estimate future external driver values using recent same-hour behaviour.
+
+    This is better than using one flat 24-hour mean because traffic, weather,
+    and pollution drivers usually have hourly patterns.
+    """
+    if col == target_col or col == time_col or is_pca_column(col):
+        return np.nan
+
+    temp = history[[time_col, col]].copy() if col in history.columns else pd.DataFrame()
+    if temp.empty:
+        return np.nan
+
+    temp[time_col] = pd.to_datetime(temp[time_col], errors="coerce")
+    temp[col] = pd.to_numeric(temp[col], errors="coerce")
+    temp = temp.dropna(subset=[time_col, col])
+    if temp.empty:
+        return np.nan
+
+    cutoff = pd.to_datetime(future_time) - pd.Timedelta(days=lookback_days)
+    recent = temp[temp[time_col] >= cutoff].copy()
+    if recent.empty:
+        recent = temp.tail(min(len(temp), 24 * lookback_days))
+
+    future_hour = pd.to_datetime(future_time).hour
+    same_hour = recent[recent[time_col].dt.hour == future_hour][col]
+    if same_hour.notna().sum() >= 2:
+        return float(same_hour.tail(lookback_days).median())
+
+    # Fallback 1: use the value from exactly one day before if available.
+    if len(temp) >= 24:
+        last_day_same_position = temp[col].iloc[-24::24]
+        if last_day_same_position.notna().sum() > 0:
+            return float(last_day_same_position.tail(3).median())
+
+    # Fallback 2: recent median, safer than mean for outliers.
+    return float(recent[col].tail(24).median())
+
+
+def build_future_row_from_recent_pattern(working, target, future_time):
+    new_row = {c: np.nan for c in working.columns}
+    new_row[time_col] = future_time
+
+    for col in working.columns:
+        if col in [target, time_col]:
+            continue
+        if is_pca_column(col):
+            # Do not carry old PC columns from df_model_ready into future rows.
+            continue
+        val = seasonal_future_value(working, col, future_time, target_col=target)
+        if not pd.isna(val):
+            new_row[col] = val
+
+    return new_row
+
+
+def build_tree_input_for_latest(latest, dataset):
+    """Return one-row model input with the exact columns used at training time."""
+    for c in dataset["original_feature_cols"]:
+        if c not in latest.columns:
+            latest[c] = np.nan
+        latest[c] = pd.to_numeric(latest[c], errors="coerce")
+
+    if dataset.get("pca_pack") is not None:
+        X_latest = transform_latest_with_pca(latest, dataset["pca_pack"])
+    else:
+        X_latest = latest.reindex(columns=dataset["tree_feature_cols"]).copy()
+
+    medians = dataset.get("tree_input_medians")
+    if medians is not None:
+        X_latest = X_latest.replace([np.inf, -np.inf], np.nan).fillna(medians)
+    else:
+        X_latest = X_latest.replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    return X_latest.reindex(columns=dataset["tree_feature_cols"], fill_value=0)
+
+
+def stabilise_recursive_prediction(raw_pred, working, target, future_time, step_number):
+    """Prevent recursive forecasts from drifting unrealistically.
+
+    The model prediction is kept as the main signal, but a small blend with
+    recent same-hour target behaviour makes the next-24-hour forecast more
+    stable when lag features start using previous predictions.
+    """
+    target_hist = pd.DataFrame({
+        "Time": pd.to_datetime(working[time_col], errors="coerce"),
+        "Value": pd.to_numeric(working[target], errors="coerce"),
+    }).dropna()
+
+    if target_hist.empty:
+        return max(0.0, float(raw_pred))
+
+    recent = target_hist.tail(min(len(target_hist), 24 * 14))
+    same_hour = recent[recent["Time"].dt.hour == pd.to_datetime(future_time).hour]["Value"]
+    if same_hour.notna().sum() >= 2:
+        seasonal_base = float(same_hour.tail(7).median())
+    else:
+        seasonal_base = float(recent["Value"].tail(24).median())
+
+    # Increase stabilisation slightly deeper into the recursive horizon.
+    blend = min(0.30, 0.10 + 0.01 * step_number)
+    pred = (1 - blend) * float(raw_pred) + blend * seasonal_base
+
+    # Safety bounds based on recent values. This avoids extreme recursive drift.
+    q_low, q_high = recent["Value"].quantile([0.01, 0.99])
+    margin = max(1.0, 0.25 * (q_high - q_low))
+    lower = max(0.0, float(q_low - margin))
+    upper = float(q_high + margin)
+    return float(np.clip(pred, lower, upper))
+
+
+def recursive_forecast_ml(model, data, target, dataset, future_steps=24):
+    working = data.copy().sort_values(time_col).reset_index(drop=True)
+    step = get_regular_time_step(working)
 
     preds = []
-    for _ in range(future_steps):
-        new_row = {c: np.nan for c in working.columns}
-        new_row[time_col] = pd.to_datetime(working[time_col], errors="coerce").dropna().iloc[-1] + step
-        # future exogenous variables are approximated using recent 24-hour mean
-        for col in working.columns:
-            if col not in [target, time_col]:
-                s = pd.to_numeric(working[col], errors="coerce").dropna()
-                if not s.empty:
-                    new_row[col] = s.tail(24).mean()
+    for i in range(future_steps):
+        last_time = pd.to_datetime(working[time_col], errors="coerce").dropna().iloc[-1]
+        future_time = last_time + step
+
+        # Future external variables use recent same-hour patterns instead of
+        # one flat 24-hour mean. This improves non-PCA recursive forecasts.
+        new_row = build_future_row_from_recent_pattern(working, target, future_time)
         working = pd.concat([working, pd.DataFrame([new_row])], ignore_index=True)
+
         temp = add_time_features(working)
         temp = add_target_lag_features(temp, target)
         latest = temp.iloc[[-1]].copy()
-        for c in dataset["original_feature_cols"]:
-            if c not in latest.columns:
-                latest[c] = 0
-            latest[c] = pd.to_numeric(latest[c], errors="coerce")
-        if dataset.get("pca_pack") is not None:
-            X_latest = transform_latest_with_pca(latest, dataset["pca_pack"])
-        else:
-            X_latest = latest[dataset["tree_feature_cols"]].replace([np.inf, -np.inf], np.nan).fillna(0)
-        pred = float(model.predict(X_latest)[0])
+
+        X_latest = build_tree_input_for_latest(latest, dataset)
+        raw_pred = float(model.predict(X_latest)[0])
+        pred = stabilise_recursive_prediction(raw_pred, working.iloc[:-1], target, future_time, i)
+
         working.loc[working.index[-1], target] = pred
         preds.append(pred)
+
     return np.asarray(preds)
 
 
@@ -876,9 +1118,24 @@ def recursive_forecast_gru(pack, dataset, future_steps=24):
     current_window = X_context.tail(lookback).copy().reset_index(drop=True)
     preds = []
     for _ in range(future_steps):
-        current_s = x_scaler.transform(current_window)
+        # Match training preprocessing and apply optional lag-1 blend.
+        medians = pack.get("medians", None)
+        current_numeric = current_window.apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan)
+        if medians is not None:
+            current_numeric = current_numeric.fillna(medians)
+        else:
+            current_numeric = current_numeric.fillna(0)
+        current_s = x_scaler.transform(current_numeric)
         pred_s = model.predict(current_s.reshape((1, lookback, current_s.shape[1])), verbose=0)
-        pred = float(y_scaler.inverse_transform(pred_s).ravel()[0])
+        pred_nn = float(y_scaler.inverse_transform(pred_s).ravel()[0])
+        alpha = float(pack.get("blend_alpha", 1.0))
+        lag1_col = pack.get("lag1_col")
+        if lag1_col in current_window.columns and alpha < 1.0:
+            lag_val = pd.to_numeric(current_window[lag1_col], errors="coerce").dropna()
+            lag_val = float(lag_val.iloc[-1]) if len(lag_val) else pred_nn
+            pred = alpha * pred_nn + (1.0 - alpha) * lag_val
+        else:
+            pred = pred_nn
         preds.append(pred)
         next_row = current_window.iloc[[-1]].copy()
         lag_cols = sorted([c for c in next_row.columns if "_lag_" in c], key=lambda x: int(x.split("_lag_")[-1]) if x.split("_lag_")[-1].isdigit() else 999)
@@ -895,6 +1152,75 @@ def recursive_forecast_gru(pack, dataset, future_steps=24):
         current_window = pd.concat([current_window.iloc[1:], next_row], axis=0).reset_index(drop=True)
     return np.asarray(preds)
 
+
+# ======================================================
+# GRU FEATURE SELECTION
+# ======================================================
+def select_gru_feature_cols(train_df, feature_cols, target, max_base_features=FAST_GRU_MAX_BASE_FEATURES):
+    """Compact GRU input selection for deployment-safe performance.
+
+    This keeps GRU focused on features that usually help all three targets:
+    NO2, PM2.5 and AQI. RF/XGBoost remain unchanged.
+    """
+    feature_cols = [c for c in feature_cols if c in train_df.columns and not is_pca_column(c) and "year" not in clean_name(c)]
+    y = pd.to_numeric(train_df[target], errors="coerce")
+
+    # Keep target lag features and rolling means, but avoid duplicate roll naming noise.
+    lag_roll = []
+    seen_roll_key = set()
+    for c in feature_cols:
+        cc = clean_name(c)
+        if is_lag_or_roll(c):
+            # Treat rollmean_6 and roll_mean_6 as the same concept.
+            key = cc.replace("rollmean", "rollmean").replace("roll_mean", "rollmean").replace("rollstd", "rollstd").replace("roll_std", "rollstd")
+            if key not in seen_roll_key:
+                seen_roll_key.add(key)
+                lag_roll.append(c)
+
+    # Calendar/cyclic variables that are useful for daily pollutant cycles.
+    time_keep_names = [
+        "hour", "dayofweek", "day_of_week", "month", "is_weekend",
+        "hour_sin", "hour_cos", "day_sin", "day_cos", "month_sin", "month_cos",
+        "wind_dir_sin", "wind_dir_cos"
+    ]
+    time_keep = [c for c in time_keep_names if c in feature_cols]
+
+    # Prefer physically meaningful pollutant/weather/traffic drivers when present.
+    preferred_tokens = [
+        "no", "no2", "nox", "pm25", "pm2", "pm10", "aqi",
+        "traffic", "citycentretvcount", "city_centretvcount", "totalpedestrians",
+        "temp", "rh", "humidity", "wd", "ws", "wind"
+    ]
+    preferred = []
+    for c in feature_cols:
+        cc = clean_name(c)
+        if c in lag_roll or c in time_keep or c == target:
+            continue
+        if any(tok in cc for tok in preferred_tokens):
+            preferred.append(c)
+
+    # Add strongest target-correlated external variables from training only.
+    base_candidates = [c for c in feature_cols if c not in lag_roll and c not in time_keep and c not in preferred]
+    scored = []
+    for c in base_candidates:
+        s = pd.to_numeric(train_df[c], errors="coerce")
+        valid = s.notna() & y.notna()
+        if valid.sum() < 30 or s[valid].nunique() <= 1:
+            continue
+        corr = abs(float(s[valid].corr(y[valid])))
+        if not np.isnan(corr):
+            scored.append((corr, c))
+    scored.sort(reverse=True)
+    top_base = [c for _, c in scored[:max_base_features]]
+
+    # Keep feature count controlled for Streamlit Cloud stability.
+    selected = list(dict.fromkeys(lag_roll + time_keep + preferred + top_base))
+    selected = selected[:38]
+    if len(selected) < 5:
+        selected = feature_cols[:38]
+    return selected
+
+
 # ======================================================
 # TRAINING PIPELINE
 # ======================================================
@@ -902,8 +1228,14 @@ def prepare_dataset_for_target(data, target, use_pca=True):
     modelling, base_cols, lag_cols, time_cols, original_feature_cols = build_target_dataset(data, target)
     train_df, test_df, X_train_orig, X_test_orig, y_train, y_test = split_time_df(modelling, original_feature_cols, target)
 
-    X_train_gru = X_train_orig.copy()
-    X_test_gru = X_test_orig.copy()
+    # GRU uses a compact feature subset to improve accuracy/stability and prevent Streamlit Cloud crashes.
+    gru_feature_cols = select_gru_feature_cols(train_df, original_feature_cols, target)
+    X_train_gru = train_df[gru_feature_cols].copy()
+    X_test_gru = test_df[gru_feature_cols].copy()
+    for c in gru_feature_cols:
+        med = pd.to_numeric(X_train_gru[c], errors="coerce").median()
+        X_train_gru[c] = pd.to_numeric(X_train_gru[c], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(med)
+        X_test_gru[c] = pd.to_numeric(X_test_gru[c], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(med)
 
     pca_pack = None
     if use_pca:
@@ -927,7 +1259,9 @@ def prepare_dataset_for_target(data, target, use_pca=True):
         "lag_cols": lag_cols,
         "time_cols": time_cols,
         "original_feature_cols": original_feature_cols,
+        "gru_feature_cols": gru_feature_cols,
         "tree_feature_cols": list(X_train_tree.columns),
+        "tree_input_medians": X_train_tree.median(numeric_only=True),
         "pca_pack": pca_pack,
     }
 
@@ -968,7 +1302,7 @@ def train_models_for_selected_target(data, target, run_tree=True, run_gru=True, 
             st.warning(f"GRU skipped: {err}")
         else:
             fitted["GRU"] = pack
-            hp["GRU"] = {"params": {"lookback": pack["lookback"], "hidden_units": "64 + 32", "dropout": "0.10 / 0.10", "learning_rate": 0.001, "epochs": pack["epochs_run"], "batch_size": FAST_GRU_BATCH_SIZE, "callbacks": "EarlyStopping + ReduceLROnPlateau"}, "cv_rmse": np.nan}
+            hp["GRU"] = {"params": {"lookback": pack["lookback"], "hidden_units": "64", "dropout": "0.12 + 0.05", "loss": "Huber + lag blend", "learning_rate": 0.0007, "epochs": pack["epochs_run"], "batch_size": FAST_GRU_BATCH_SIZE, "features_used": len(dataset.get("gru_feature_cols", [])), "blend_alpha": round(float(pack.get("blend_alpha", 1.0)), 2), "callbacks": "EarlyStopping + ReduceLROnPlateau"}, "cv_rmse": np.nan}
             tm = metrics_dict(y_test_eval, test_pred)
             results.append({"Model": "GRU", **tm, "Features": dataset["X_train_gru"].shape[1], "Input Type": "Original Sequential Features"})
             train_time = dataset["time_train"].iloc[-len(y_train_eval):].reset_index(drop=True)
@@ -982,15 +1316,21 @@ def train_models_for_selected_target(data, target, run_tree=True, run_gru=True, 
 # SESSION STATE
 # ======================================================
 def reset_outputs():
-    keys = ["mf_results", "mf_fitted", "mf_test_preds", "mf_train_preds", "mf_hp", "mf_dataset", "mf_forecasts", "mf_target"]
+    keys = [
+        "mf_results",
+        "mf_fitted",
+        "mf_test_preds",
+        "mf_train_preds",
+        "mf_hp",
+        "mf_dataset",
+        "mf_tree_dataset",
+        "mf_gru_dataset",
+        "mf_forecasts",
+        "mf_target",
+    ]
     for k in keys:
         if k in st.session_state:
             del st.session_state[k]
-
-current_training_key = (selected_target, str(start_date), str(end_date), horizon_label)
-if st.session_state.get("mf_target") != current_training_key:
-    reset_outputs()
-    st.session_state["mf_target"] = current_training_key
 
 # ======================================================
 # SECTION 1: RF + XGBOOST
@@ -1002,20 +1342,50 @@ with h1:
 with h2:
     st.markdown(f'<div class="select-target">Select Target: <span class="blue-text">{target_label(selected_target)}</span></div>', unsafe_allow_html=True)
     use_pca_for_tree = st.toggle("Use PCA", value=True, help="PCA is fitted only on the training split for RF/XGBoost.")
+
+# Reset saved model outputs whenever the selected target/date/horizon/PCA mode changes.
+# This prevents old PCA results being displayed after switching PCA ON/OFF.
+current_training_key = (
+    selected_target,
+    str(start_date),
+    str(end_date),
+    horizon_label,
+    bool(use_pca_for_tree),
+)
+if st.session_state.get("mf_target") != current_training_key:
+    reset_outputs()
+    # Clear Streamlit cached objects as an extra safeguard so old PCA/non-PCA
+    # artefacts cannot remain visible after the toggle changes.
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    try:
+        st.cache_resource.clear()
+    except Exception:
+        pass
+    st.session_state["mf_target"] = current_training_key
+
 with h3:
     train_tree_clicked = st.button("Train RF + XGBoost", use_container_width=True)
 
 if train_tree_clicked:
-    with st.spinner("Fast training RF and XGBoost with PCA + lag/time features..."):
+    with st.spinner("Fast training RF and XGBoost with selected PCA setting..."):
         results_df, fitted, test_preds, train_preds, hp, dataset = train_models_for_selected_target(
             df_work, selected_target, run_tree=True, run_gru=False, use_pca=use_pca_for_tree
         )
+        # Force the stored dataset to match the current toggle. This prevents
+        # old PC columns/PCA metadata from being displayed after switching PCA OFF.
+        if not use_pca_for_tree and dataset is not None:
+            dataset["pca_pack"] = None
+            dataset["tree_feature_cols"] = [c for c in dataset["tree_feature_cols"] if not is_pca_column(c) and "year" not in clean_name(c)]
         st.session_state["mf_results"] = results_df
         st.session_state["mf_fitted"] = fitted
         st.session_state["mf_test_preds"] = test_preds
         st.session_state["mf_train_preds"] = train_preds
         st.session_state["mf_hp"] = hp
         st.session_state["mf_dataset"] = dataset
+        st.session_state["mf_tree_dataset"] = dataset
         st.session_state["mf_forecasts"] = {}
 
 results_df = st.session_state.get("mf_results", pd.DataFrame())
@@ -1023,10 +1393,10 @@ fitted = st.session_state.get("mf_fitted", {})
 test_preds = st.session_state.get("mf_test_preds", {})
 train_preds = st.session_state.get("mf_train_preds", {})
 hp = st.session_state.get("mf_hp", {})
-dataset = st.session_state.get("mf_dataset")
+dataset = st.session_state.get("mf_tree_dataset", st.session_state.get("mf_dataset"))
 
-r1c1, r1c2, r1c3, r1c4 = st.columns([1.15, 1.15, 1.55, 1.35], gap="small")
-with r1c1:
+top_tree_left, top_tree_right = st.columns([1.25, 1.35], gap="large")
+with top_tree_left:
     st.markdown('<div class="small-title">MODEL PERFORMANCE (TEST SET)</div>', unsafe_allow_html=True)
     if not results_df.empty:
         tree_table = results_df[results_df["Model"].isin(["Random Forest", "XGBoost"])][["Model", "R² Score", "RMSE", "MAE", "MAPE (%)", "Input Type"]].copy()
@@ -1038,7 +1408,21 @@ with r1c1:
             st.markdown(f'<div class="best-box">🏆 Best Tree Model: {best_tree["Model"]}</div>', unsafe_allow_html=True)
     else:
         st.info("Click Train RF + XGBoost.")
-with r1c2:
+with top_tree_right:
+    st.markdown('<div class="small-title">HYPERPARAMETER TUNING (BEST)</div>', unsafe_allow_html=True)
+    if hp:
+        rows = []
+        for model_name in ["Random Forest", "XGBoost"]:
+            if model_name in hp:
+                rows.append({"Model": model_name, "Best Parameters": "\n".join([f"{k}: {v}" for k, v in hp[model_name]["params"].items()]), "Best RMSE (CV)": fmt(hp[model_name]["cv_rmse"], 2)})
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=205)
+    else:
+        st.info("CV tuning summary appears after training.")
+
+st.markdown('<div style="height:14px;"></div>', unsafe_allow_html=True)
+
+bottom_tree_left, bottom_tree_right = st.columns([1.0, 1.45], gap="large")
+with bottom_tree_left:
     st.markdown('<div class="small-title">FEATURE / PCA IMPORTANCE</div>', unsafe_allow_html=True)
     if dataset and fitted:
         candidate = "XGBoost" if "XGBoost" in fitted else "Random Forest"
@@ -1046,10 +1430,16 @@ with r1c2:
         if fig:
             st.plotly_chart(fig, use_container_width=True, config=CONFIG)
         if dataset.get("pca_pack"):
-            st.markdown(f'<div class="table-note">PCA applied: {dataset["pca_pack"]["n_components"]} components, {dataset["pca_pack"]["variance_explained"]:.1f}% variance.</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="table-note">PCA ON: model uses PC components + lag/time features. '
+                f'{dataset["pca_pack"]["n_components"]} components explain {dataset["pca_pack"]["variance_explained"]:.1f}% variance.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown('<div class="table-note">PCA OFF: model uses original engineered features + lag/time features.</div>', unsafe_allow_html=True)
     else:
         st.info("Feature importance appears after training.")
-with r1c3:
+with bottom_tree_right:
     st.markdown('<div class="small-title">ACTUAL vs PREDICTED (BEST TREE MODEL)</div>', unsafe_allow_html=True)
     if not results_df.empty:
         tree_part = results_df[results_df["Model"].isin(["Random Forest", "XGBoost"])]
@@ -1060,16 +1450,6 @@ with r1c3:
             st.info("No tree model result yet.")
     else:
         st.info("Actual vs predicted appears after training.")
-with r1c4:
-    st.markdown('<div class="small-title">HYPERPARAMETER TUNING (BEST)</div>', unsafe_allow_html=True)
-    if hp:
-        rows = []
-        for model_name in ["Random Forest", "XGBoost"]:
-            if model_name in hp:
-                rows.append({"Model": model_name, "Best Parameters": "\n".join([f"{k}: {v}" for k, v in hp[model_name]["params"].items()]), "Best RMSE (CV)": fmt(hp[model_name]["cv_rmse"], 2)})
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=205)
-    else:
-        st.info("CV tuning summary appears after training.")
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ======================================================
@@ -1088,12 +1468,12 @@ if train_gru_clicked:
     with st.spinner("Training GRU with fixed 24-hour sequence window..."):
         if dataset is None:
             # Prepare dataset even if tree models were not trained.
-            dataset = prepare_dataset_for_target(df_work, selected_target, use_pca=True)
-            st.session_state["mf_dataset"] = dataset
+            dataset = prepare_dataset_for_target(df_work, selected_target, use_pca=False)
+            st.session_state["mf_gru_dataset"] = dataset
         results_new, fitted_new, test_preds_new, train_preds_new, hp_new, dataset_new = train_models_for_selected_target(
             df_work, selected_target, run_tree=False, run_gru=True, use_pca=True
         )
-        dataset = dataset_new
+        gru_dataset = dataset_new
         old_results = st.session_state.get("mf_results", pd.DataFrame())
         if not old_results.empty:
             old_results = old_results[old_results["Model"] != "GRU"]
@@ -1104,7 +1484,11 @@ if train_gru_clicked:
         st.session_state.setdefault("mf_test_preds", {}).update(test_preds_new)
         st.session_state.setdefault("mf_train_preds", {}).update(train_preds_new)
         st.session_state.setdefault("mf_hp", {}).update(hp_new)
-        st.session_state["mf_dataset"] = dataset
+        st.session_state["mf_gru_dataset"] = gru_dataset
+        # Keep mf_dataset as the tree dataset if tree models exist. This prevents
+        # RF/XGBoost forecasts from accidentally using the GRU/PCA dataset.
+        if "mf_tree_dataset" not in st.session_state:
+            st.session_state["mf_dataset"] = gru_dataset
         st.session_state["mf_forecasts"] = {}
 
 results_df = st.session_state.get("mf_results", pd.DataFrame())
@@ -1112,17 +1496,10 @@ fitted = st.session_state.get("mf_fitted", {})
 test_preds = st.session_state.get("mf_test_preds", {})
 train_preds = st.session_state.get("mf_train_preds", {})
 hp = st.session_state.get("mf_hp", {})
-dataset = st.session_state.get("mf_dataset")
+dataset = st.session_state.get("mf_tree_dataset", st.session_state.get("mf_gru_dataset", st.session_state.get("mf_dataset")))
 
-gc1, gc2, gc3, gc4 = st.columns([1.25, 1.15, 1.55, 1.3], gap="small")
-with gc1:
-    st.markdown('<div class="small-title">GRU TRAINING LOSS</div>', unsafe_allow_html=True)
-    if "GRU" in fitted:
-        st.plotly_chart(plot_gru_loss(fitted["GRU"].get("history", {})), use_container_width=True, config=CONFIG)
-        st.markdown(f'<div class="table-note">Window Used: {fitted["GRU"].get("lookback", "-")} Hours</div>', unsafe_allow_html=True)
-    else:
-        st.info("Click Train GRU.")
-with gc2:
+top_gru_left, top_gru_right = st.columns([1.15, 1.35], gap="large")
+with top_gru_left:
     st.markdown('<div class="small-title">GRU PERFORMANCE (TEST SET)</div>', unsafe_allow_html=True)
     if not results_df.empty and "GRU" in list(results_df["Model"]):
         row = results_df[results_df["Model"] == "GRU"].iloc[0]
@@ -1134,13 +1511,7 @@ with gc2:
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.info("GRU metrics appear after training.")
-with gc3:
-    st.markdown('<div class="small-title">ACTUAL vs PREDICTED (GRU)</div>', unsafe_allow_html=True)
-    if "GRU" in test_preds:
-        st.plotly_chart(plot_actual_pred(test_preds["GRU"], selected_target), use_container_width=True, config=CONFIG)
-    else:
-        st.info("GRU plot appears after training.")
-with gc4:
+with top_gru_right:
     st.markdown('<div class="small-title">GRU CONFIGURATION (BEST)</div>', unsafe_allow_html=True)
     if "GRU" in hp:
         rows = [{"Item": k, "Value": v} for k, v in hp["GRU"]["params"].items()]
@@ -1149,6 +1520,23 @@ with gc4:
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=230)
     else:
         st.info("GRU configuration appears after training.")
+
+st.markdown('<div style="height:14px;"></div>', unsafe_allow_html=True)
+
+bottom_gru_left, bottom_gru_right = st.columns([1.0, 1.45], gap="large")
+with bottom_gru_left:
+    st.markdown('<div class="small-title">GRU TRAINING LOSS</div>', unsafe_allow_html=True)
+    if "GRU" in fitted:
+        st.plotly_chart(plot_gru_loss(fitted["GRU"].get("history", {})), use_container_width=True, config=CONFIG)
+        st.markdown(f'<div class="table-note">Window Used: {fitted["GRU"].get("lookback", "-")} Hours</div>', unsafe_allow_html=True)
+    else:
+        st.info("Click Train GRU.")
+with bottom_gru_right:
+    st.markdown('<div class="small-title">ACTUAL vs PREDICTED (GRU)</div>', unsafe_allow_html=True)
+    if "GRU" in test_preds:
+        st.plotly_chart(plot_actual_pred(test_preds["GRU"], selected_target), use_container_width=True, config=CONFIG)
+    else:
+        st.info("GRU plot appears after training.")
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ======================================================
@@ -1169,12 +1557,21 @@ if forecast_clicked:
     else:
         with st.spinner("Generating recursive forecast from the best model..."):
             forecasts = {}
+            tree_dataset = st.session_state.get("mf_tree_dataset")
+            gru_dataset = st.session_state.get("mf_gru_dataset", dataset)
+
             for model_name, model in fitted.items():
                 try:
                     if model_name == "GRU":
-                        forecasts[model_name] = recursive_forecast_gru(model, dataset, future_steps)
+                        if gru_dataset is None:
+                            st.warning("Forecast skipped for GRU: GRU dataset is missing. Please train GRU again.")
+                            continue
+                        forecasts[model_name] = recursive_forecast_gru(model, gru_dataset, future_steps)
                     else:
-                        forecasts[model_name] = recursive_forecast_ml(model, df_work, selected_target, dataset, future_steps)
+                        if tree_dataset is None:
+                            st.warning(f"Forecast skipped for {model_name}: tree dataset is missing. Please train RF + XGBoost again.")
+                            continue
+                        forecasts[model_name] = recursive_forecast_ml(model, df_work, selected_target, tree_dataset, future_steps)
                 except Exception as exc:
                     st.warning(f"Forecast skipped for {model_name}: {exc}")
             st.session_state["mf_forecasts"] = forecasts

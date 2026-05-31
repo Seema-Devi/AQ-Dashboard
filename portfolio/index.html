@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Air Quality Forecasting Portfolio</title>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f4f7fb;
+            color: #1e293b;
+        }
+
+        header {
+            background: linear-gradient(135deg, #003d7a, #0077b6);
+            color: white;
+            padding: 60px 10%;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 42px;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 18px;
+            max-width: 850px;
+            margin: auto;
+            line-height: 1.6;
+        }
+
+        section {
+            padding: 45px 10%;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 14px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+            margin-bottom: 25px;
+        }
+
+        h2 {
+            color: #003d7a;
+            margin-top: 0;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+        }
+
+        .tag {
+            background: #e0f2fe;
+            color: #075985;
+            padding: 10px 14px;
+            border-radius: 20px;
+            display: inline-block;
+            margin: 6px;
+            font-weight: bold;
+        }
+
+        img {
+            width: 100%;
+            border-radius: 12px;
+            margin-top: 12px;
+            border: 1px solid #dbe3ea;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        th,
+        td {
+            border: 1px solid #dbe3ea;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background: #003d7a;
+            color: white;
+        }
+
+        a.button {
+            display: inline-block;
+            background: #003d7a;
+            color: white;
+            text-decoration: none;
+            padding: 12px 18px;
+            border-radius: 8px;
+            margin: 8px 8px 8px 0;
+            font-weight: bold;
+        }
+
+        a.button:hover {
+            background: #0059a8;
+        }
+
+        footer {
+            background: #003d7a;
+            color: white;
+            text-align: center;
+            padding: 22px;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>AI-Driven Air Quality Forecasting Dashboard</h1>
+        <p>
+            A capstone project focused on analysing Auckland air quality data and developing
+            machine learning models to forecast future pollution levels using Random Forest,
+            XGBoost, and LSTM.
+        </p>
+    </header>
+
+    <section>
+        <div class="card">
+            <h2>Project Overview</h2>
+            <p>
+                This project develops an interactive forecasting dashboard for air quality monitoring.
+                The system supports data cleaning, exploratory analysis, feature engineering,
+                model optimisation, and 24-hour forecasting of selected air quality parameters.
+            </p>
+
+            <a class="button" href="YOUR_GITHUB_REPO_LINK_HERE" target="_blank">GitHub Repository</a>
+            <a class="button" href="YOUR_STREAMLIT_APP_LINK_HERE" target="_blank">Live Dashboard</a>
+        </div>
+
+        <div class="card">
+            <h2>Project Objectives</h2>
+            <ul>
+                <li>Analyse air pollution and meteorological trends.</li>
+                <li>Apply feature engineering using lag, rolling, and time-based features.</li>
+                <li>Train and optimise Random Forest, XGBoost, and LSTM models.</li>
+                <li>Generate 24-hour forecasts for selected air quality parameters.</li>
+                <li>Present insights using an interactive Streamlit dashboard.</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>Technologies Used</h2>
+            <span class="tag">Python</span>
+            <span class="tag">Streamlit</span>
+            <span class="tag">Pandas</span>
+            <span class="tag">NumPy</span>
+            <span class="tag">Scikit-learn</span>
+            <span class="tag">XGBoost</span>
+            <span class="tag">TensorFlow / Keras</span>
+            <span class="tag">Matplotlib</span>
+            <span class="tag">GitHub</span>
+        </div>
+
+        <div class="card">
+            <h2>Project Workflow</h2>
+            <p>
+                The project follows a complete data analytics and machine learning workflow.
+            </p>
+            <img src="../screenshots/workflow.png" alt="Project Workflow">
+        </div>
+
+        <div class="card">
+            <h2>Dashboard Screenshots</h2>
+
+            <h3>Home Page</h3>
+            <img src="../screenshots/home.png" alt="Home Page Screenshot">
+
+            <h3>EDA and Visualisation</h3>
+            <img src="../screenshots/eda.png" alt="EDA Screenshot">
+
+            <h3>Model Development</h3>
+            <img src="../screenshots/model.png" alt="Model Development Screenshot">
+
+            <h3>24-Hour Forecast</h3>
+            <img src="../screenshots/forecast.png" alt="Forecast Screenshot">
+        </div>
+
+        <div class="card">
+            <h2>Model Development</h2>
+            <p>
+                The modelling stage compares traditional machine learning models with deep learning.
+                Random Forest and XGBoost are used as baseline and optimised models, while LSTM is
+                used for time-series forecasting because it can learn sequential pollution patterns.
+            </p>
+
+            <table>
+                <tr>
+                    <th>Model</th>
+                    <th>Purpose</th>
+                    <th>Result</th>
+                </tr>
+                <tr>
+                    <td>Random Forest</td>
+                    <td>Baseline machine learning model</td>
+                    <td>Used for comparison</td>
+                </tr>
+                <tr>
+                    <td>XGBoost</td>
+                    <td>Optimised ensemble model</td>
+                    <td>Used for improved prediction</td>
+                </tr>
+                <tr>
+                    <td>LSTM</td>
+                    <td>Time-series forecasting model</td>
+                    <td>Used for 24-hour forecasting</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>Team Members and Contributions</h2>
+            <table>
+                <tr>
+                    <th>Team Member</th>
+                    <th>Contribution</th>
+                </tr>
+                <tr>
+                    <td>Seema Devi</td>
+                    <td>Dashboard development, feature engineering, model optimisation, GitHub management</td>
+                </tr>
+                <tr>
+                    <td>Team Member 2</td>
+                    <td>EDA, data cleaning, report writing</td>
+                </tr>
+                <tr>
+                    <td>Team Member 3</td>
+                    <td>Model testing, documentation, presentation support</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>Challenges and Improvements</h2>
+            <ul>
+                <li>Handling missing values and inconsistent time-series records.</li>
+                <li>Improving EDA using environmental visualisations such as wind and seasonal analysis.</li>
+                <li>Applying model optimisation and cross-validation to improve reliability.</li>
+                <li>Developing recursive 24-hour forecasting for future pollution prediction.</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>Final Outcome</h2>
+            <p>
+                The final outcome is an interactive AI-based forecasting dashboard that supports
+                air quality analysis, model comparison, optimisation, and next 24-hour prediction.
+                The project demonstrates how machine learning can support environmental monitoring
+                and data-driven decision-making.
+            </p>
+        </div>
+    </section>
+
+    <footer>
+        <p>Capstone Project Portfolio | AI-Driven Air Quality Forecasting Dashboard</p>
+    </footer>
+
+</body>
+
+</html>
